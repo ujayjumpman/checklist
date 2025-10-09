@@ -152,7 +152,10 @@ def Tower5(sheet, ignore_year, ignore_month):
 
 def Tower6(sheet, ignore_year, ignore_month):
     rows = [4, 5, 6, 7, 9, 10, 14, 15, 16, 17, 19, 20]
-    cols = ['FM', 'FQ', 'FU', 'FY', 'GC', 'GG', 'GK']
+    cols = ['FM', 'FQ', 'FU', 'FY', 'GC', 'GG', 'GK', 'GO', 'GS', 'GW', 'HA', 'HE', 'HI', 'HM']
+    
+    green_count = 0  # Add counter
+    
     for row in rows:
         for col in cols:
             cell = sheet[f"{col}{row}"]
@@ -176,10 +179,14 @@ def Tower6(sheet, ignore_year, ignore_month):
                 color = fill.start_color.rgb
                 if color == "FF92D050":
                     tower6.append(1)
+                    green_count += 1
+                    st.write(f"✓ GREEN found at {col}{row}")  # Debug output
                 else:
                     tower6.append(0)
             else:
                 tower6.append(0)
+    
+    st.write(f"Tower 6 Total Green Cells Found: {green_count}")
 
 def Tower7(sheet, ignore_year, ignore_month):
     rows = [4, 5, 6, 7, 9, 10, 14, 15, 16, 17, 19, 20]
