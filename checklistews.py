@@ -1,4 +1,3 @@
-
 import streamlit as st
 import requests
 import json
@@ -7,7 +6,7 @@ import urllib3
 import certifi
 import pandas as pd
 from datetime import datetime
-import re
+import re 
 import logging
 import os
 from dotenv import load_dotenv
@@ -651,7 +650,7 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
 
     if completed['name'].isna().all():
         logger.error(f"All 'name' values are missing in {dataset_name} data after merge!")
-        st.error(f"❌ All 'name' values are missing in {dataset_name} data after merge! Check location data.")
+        st.error(f"All 'name' values are missing in {dataset_name} data after merge! Check location data.")
         completed['name'] = 'Unknown'
     else:
         completed['name'] = completed['name'].fillna('Unknown')
@@ -724,11 +723,10 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
         for path, count in full_path_counts.items():
             logger.debug(f"  Path: {path}, Count: {count}")
         
-        # Log paths that will be filtered out
         logger.debug("Paths that WILL be filtered out by is_roof_slab_only:")
         paths_to_be_filtered = completed[~completed['full_path'].apply(is_roof_slab_only)]['full_path'].unique()
         for path in sorted(paths_to_be_filtered):
-            logger.debug(f"  ✗ Path: {path}")
+            logger.debug(f"  Path: {path}")
         
         completed = completed[completed['full_path'].apply(is_roof_slab_only)]
         completed_after_filter = len(completed)
@@ -738,7 +736,7 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
             logger.debug(f"Paths that passed roof slab filtering:")
             full_path_counts_after = completed['full_path'].value_counts()
             for path, count in full_path_counts_after.items():
-                logger.debug(f"  ✓ Path: {path}, Count: {count}")
+                logger.debug(f"  Path: {path}, Count: {count}")
         else:
             logger.warning(f"No paths contain 'roof slab', 'slab', 'roofslab', or 'slab level' in {dataset_name} dataset")
     
@@ -768,25 +766,27 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
     for idx, row in completed[['full_path', 'tower_name']].head(20).iterrows():
         logger.debug(f"  full_path: {row['full_path']} -> tower_name: {row['tower_name']}")
 
-    analysis = completed.groupby(['tower_name', 'activityName'])['qiLocationId'].nunique().reset_index(name='CompletedCount')
+    # Changed: This now represents CLOSED checklists from Asite
+    analysis = completed.groupby(['tower_name', 'activityName'])['qiLocationId'].nunique().reset_index(name='ClosedChecklistCount')
     analysis = analysis.sort_values(by=['tower_name', 'activityName'], ascending=True)
-    total_completed = analysis['CompletedCount'].sum()
+    total_closed = analysis['ClosedChecklistCount'].sum()
 
     activity_counts = completed.groupby('activityName')['qiLocationId'].nunique().reset_index(name='Count')
     for activity in asite_activities:
         if activity in activity_counts['activityName'].values:
             count_table.loc[activity, 'Count'] = activity_counts[activity_counts['activityName'] == activity]['Count'].iloc[0]
 
-    logger.info(f"Total completed activities for {dataset_name}: {total_completed}")
+    logger.info(f"Total closed checklists for {dataset_name}: {total_closed}")
     logger.info(f"Count table for {dataset_name}:\n{count_table.to_string()}")
     
     logger.debug(f"Final analysis results for {dataset_name} by tower:")
     for tower in sorted(analysis['tower_name'].unique()):
         tower_data = analysis[analysis['tower_name'] == tower]
-        tower_total = tower_data['CompletedCount'].sum()
-        logger.debug(f"  {tower}: {tower_total} total completed activities")
+        tower_total = tower_data['ClosedChecklistCount'].sum()
+        logger.debug(f"  {tower}: {tower_total} total closed checklists")
     
-    return analysis, total_completed, count_table
+    return analysis, total_closed, count_table
+
 
 
 # Main analysis function for Wave City Club Structure
@@ -849,7 +849,7 @@ def AnalyzeStatusManually(email=None, password=None):
     try:
         logger.info("Starting structure data processing...")
         structure_analysis, structure_total, _ = process_data(structure_data, structure_activity, structure_locations, "Structure")
-        logger.info(f"Structure data processed. Total completed activities: {structure_total}")
+        logger.info(f"Structure data processed. Total closed checklists: {structure_total}")
     except Exception as e:
         st.error(f"❌ Error processing structure data: {str(e)}")
         logger.error(f"AnalyzeStatusManually failed: Error processing structure data: {str(e)}")
@@ -879,27 +879,28 @@ def AnalyzeStatusManually(email=None, password=None):
 
     sorted_towers = sorted(unique_towers, key=sort_key)
 
-    st.write("### EWS_LIG Structure Quality Analysis (Completed Activities):")
+    st.write("### EWS_LIG Structure Quality Analysis (Closed Checklists from Asite):")
     
     for tower in sorted_towers:
         tower_data = structure_analysis[structure_analysis['tower_name'] == tower]
         if tower_data.empty:
-            st.write(f"**{tower}:** No completed activities found.")
-            logger.info(f"No completed activities for {tower}")
+            st.write(f"**{tower}:** No closed checklists found.")
+            logger.info(f"No closed checklists for {tower}")
             continue
 
         st.write(f"**{tower}:**")
         output_lines = []
-        output_lines.append("activityName            CompletedCount")
+        output_lines.append("activityName            ClosedChecklistCount")
         tower_total = 0
         for _, row in tower_data.iterrows():
-            output_lines.append(f"{row['activityName']:<30} {row['CompletedCount']}")
-            tower_total += row['CompletedCount']
+            # CHANGED: Use ClosedChecklistCount instead of CompletedCount
+            output_lines.append(f"{row['activityName']:<30} {row['ClosedChecklistCount']}")
+            tower_total += row['ClosedChecklistCount']
         output_lines.append(f"{'Total for ' + tower:<30} {tower_total}")
         st.text("\n".join(output_lines))
         logger.info(f"Displayed output for {tower}")
 
-    st.write(f"**Total Completed Activities Across All Towers:** {structure_total}")
+    st.write(f"**Total Closed Checklists Across All Towers:** {structure_total}")
 
     end_time = time.time()
     st.write(f"Total execution time: {end_time - start_time:.2f} seconds")
@@ -1536,19 +1537,14 @@ def getTotal(ai_data):
 # Function to handle activity count display
 def display_activity_count():
     try:
-        st.write("🔍 **DEBUG: Starting display_activity_count function**")
+        st.write("Starting display_activity_count function")
         
-        # Rearranged activities according to new categorization
         specific_activities = [
-            # Civil Works
             "Concreting", "Shuttering", "Reinforcement", "De-Shuttering",
-            # MEP Works  
             "Plumbing Works", "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket",
-            # Interior Finishing Works
             "Floor Tile", "POP & Gypsum Plaster", "Wall Tile", "Waterproofing - Sunken"
         ]
         
-        # External Development Activities (separate list)
         external_development_activities = [
             "Granular Sub-base", "Kerb Stone", "Rain Water/Storm Line", 
             "Saucer drain/Paver block", "Sewer Line", "Stamp Concrete", 
@@ -1557,25 +1553,20 @@ def display_activity_count():
         
         all_activities = specific_activities + external_development_activities + ["UP-First Fix and CP-First Fix"]
 
-        # Updated category mapping
         category_mapping = {
-            # Civil Works
             "Concreting": "Civil Works",
             "Shuttering": "Civil Works", 
             "Reinforcement": "Civil Works",
             "De-Shuttering": "Civil Works",
-            # MEP Works
             "Plumbing Works": "MEP Works",
             "Slab Conducting": "MEP Works",
             "Wall Conducting": "MEP Works", 
             "Wiring & Switch Socket": "MEP Works",
             "UP-First Fix and CP-First Fix": "MEP Works",
-            # Interior Finishing Works
             "Floor Tile": "Interior Finishing Works",
             "POP & Gypsum Plaster": "Interior Finishing Works",
             "Wall Tile": "Interior Finishing Works",
             "Waterproofing - Sunken": "Interior Finishing Works",
-            # External Development Activities
             "Granular Sub-base": "External Development Activities",
             "Kerb Stone": "External Development Activities",
             "Rain Water/Storm Line": "External Development Activities",
@@ -1586,75 +1577,53 @@ def display_activity_count():
             "WMM": "External Development Activities"
         }
 
-        st.write("✅ **DEBUG: Categories and activities defined successfully**")
+        st.write("Categories and activities defined successfully")
 
-        # DEBUG: Check all DataFrames in session state
-        st.write("🔍 **DEBUG: Checking session state DataFrames...**")
-        
-        # Check structure_analysis
         structure_analysis = st.session_state.get('structure_analysis')
-        st.write(f"**structure_analysis type:** {type(structure_analysis)}")
+        st.write(f"structure_analysis type: {type(structure_analysis)}")
         if structure_analysis is not None:
-            st.write(f"**structure_analysis shape:** {structure_analysis.shape}")
-            st.write(f"**structure_analysis columns:** {list(structure_analysis.columns)}")
+            st.write(f"structure_analysis shape: {structure_analysis.shape}")
+            st.write(f"structure_analysis columns: {list(structure_analysis.columns)}")
         else:
-            st.error("❌ structure_analysis is None")
+            st.error("structure_analysis is None")
             return
 
-        # Check COS DataFrame
         cos_df = st.session_state.get('cos_df_Revised_Baseline_45daysNGT_Rai')
-        st.write(f"**cos_df type:** {type(cos_df)}")
+        st.write(f"cos_df type: {type(cos_df)}")
         if cos_df is not None:
-            st.write(f"**cos_df shape:** {cos_df.shape}")
-            st.write(f"**cos_df columns:** {list(cos_df.columns)}")
+            st.write(f"cos_df shape: {cos_df.shape}")
+            st.write(f"cos_df columns: {list(cos_df.columns)}")
         else:
-            st.warning("⚠️ cos_df is None - will use Asite data only")
+            st.warning("cos_df is None - will use Asite data only")
 
-        # Check structure_location_data
-        structure_location_data = st.session_state.get('structure_location_data')
-        st.write(f"**structure_location_data type:** {type(structure_location_data)}")
-        if structure_location_data is not None:
-            st.write(f"**structure_location_data shape:** {structure_location_data.shape}")
-            st.write(f"**structure_location_data columns:** {list(structure_location_data.columns)}")
-        else:
-            st.warning("⚠️ structure_location_data is None")
-
-        # Check other potential DataFrames
-        for key, value in st.session_state.items():
-            if isinstance(value, pd.DataFrame):
-                st.write(f"**{key} DataFrame shape:** {value.shape}")
-
-        st.write("✅ **DEBUG: Session state check completed**")
-
-        # Validate structure_analysis
         if structure_analysis is None:
-            st.error("❌ No structure analysis data available. Please run 'AnalyzeStatusManually' first.")
+            st.error("No structure analysis data available. Please run 'AnalyzeStatusManually' first.")
             return
         
         if not isinstance(structure_analysis, pd.DataFrame):
-            st.error(f"❌ structure_analysis is not a DataFrame. Found type: {type(structure_analysis)}")
+            st.error(f"structure_analysis is not a DataFrame. Found type: {type(structure_analysis)}")
             return
         
         if structure_analysis.empty:
-            st.error("❌ structure_analysis DataFrame is empty.")
+            st.error("structure_analysis DataFrame is empty.")
             return
 
-        # Check required columns exist
-        required_columns = ['tower_name', 'activityName', 'CompletedCount']
+        # Changed: Now looking for ClosedChecklistCount
+        required_columns = ['tower_name', 'activityName', 'ClosedChecklistCount']
         missing_columns = [col for col in required_columns if col not in structure_analysis.columns]
         if missing_columns:
-            st.error(f"❌ Missing required columns in structure_analysis: {missing_columns}")
+            st.error(f"Missing required columns in structure_analysis: {missing_columns}")
             return
 
-        st.write("✅ **DEBUG: structure_analysis validation passed**")
+        st.write("structure_analysis validation passed")
 
-        # Extract Asite counts for validation
-        asite_counts = {}
+        # Extract Asite closed checklist counts
+        asite_closed_counts = {}
         unique_towers = structure_analysis['tower_name'].unique()
-        st.write(f"**DEBUG: Found towers:** {list(unique_towers)}")
+        st.write(f"Found towers: {list(unique_towers)}")
         
         if len(unique_towers) == 0:
-            st.error("❌ No towers found in structure analysis data.")
+            st.error("No towers found in structure analysis data.")
             return
 
         for tower in unique_towers:
@@ -1662,104 +1631,93 @@ def display_activity_count():
             tower_counts = {}
             for activity in specific_activities + external_development_activities:
                 activity_data = tower_data[tower_data['activityName'] == activity]
-                count = int(activity_data['CompletedCount'].iloc[0]) if not activity_data.empty else 0
+                count = int(activity_data['ClosedChecklistCount'].iloc[0]) if not activity_data.empty else 0
                 tower_counts[activity] = count
-            asite_counts[tower] = tower_counts
+            asite_closed_counts[tower] = tower_counts
 
-        st.write(f"✅ **DEBUG: Extracted asite_counts for {len(asite_counts)} towers**")
+        st.write(f"Extracted asite_closed_counts for {len(asite_closed_counts)} towers")
 
-        # Initialize ai_response if needed
         if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
             st.session_state.ai_response = {}
 
         count_tables = {}
 
-        # Process each tower with fallback to Asite data
-        st.write("🔄 **DEBUG: Processing towers...**")
-        
-        target_towers = ['EWS Tower 1', 'LIG Tower 3']  # Only process these two
+        target_towers = ['EWS Tower 1', 'LIG Tower 3']
         
         for tower in target_towers:
-            st.write(f"**Processing {tower}...**")
+            st.write(f"Processing {tower}...")
             
-            if tower in asite_counts:
-                # Create count table using Asite data (fallback approach)
+            if tower in asite_closed_counts:
+                # Changed: Now using Closed_Checklist for Asite data
                 count_table = pd.DataFrame({
-                    'Count_Unfiltered': [asite_counts[tower].get(activity, 0) for activity in all_activities],
-                    'Count_Filtered': [asite_counts[tower].get(activity, 0) for activity in all_activities]
+                    'Closed_Checklist_Unfiltered': [asite_closed_counts[tower].get(activity, 0) for activity in all_activities],
+                    'Closed_Checklist_Filtered': [asite_closed_counts[tower].get(activity, 0) for activity in all_activities]
                 }, index=all_activities)
                 
                 count_tables[tower] = count_table
-                st.write(f"✅ **DEBUG: Created count table for {tower} using Asite data**")
+                st.write(f"Created count table for {tower} using Asite data")
             else:
-                st.warning(f"⚠️ No Asite data found for {tower}")
+                st.warning(f"No Asite data found for {tower}")
 
         if not count_tables:
-            st.error("❌ No count tables generated for any towers.")
+            st.error("No count tables generated for any towers.")
             return
 
-        st.write(f"✅ **DEBUG: Generated count tables for {len(count_tables)} towers**")
+        st.write(f"Generated count tables for {len(count_tables)} towers")
 
-        # Process and display results
         for tname, count_table in count_tables.items():
-            st.write(f"**Processing AI response for {tname}...**")
+            st.write(f"Processing AI response for {tname}...")
             
             try:
-                # Display the count table
-                st.write(f"**Activity Count for {tname}:**")
+                st.write(f"Activity Count for {tname}:")
                 st.dataframe(count_table)
 
-                # Prepare data for AI
-                count_table_filtered = count_table[['Count_Filtered']].rename(columns={'Count_Filtered': 'Count'})
+                # Changed: Now sending Closed_Checklist to AI
+                count_table_filtered = count_table[['Closed_Checklist_Filtered']].rename(columns={'Closed_Checklist_Filtered': 'Count'})
                 
-                # Generate AI response
-                st.write(f"📤 **Sending data to AI for {tname}...**")
+                st.write(f"Sending data to AI for {tname}...")
                 ai_response = generatePrompt(count_table_filtered, tname)
                 
                 if ai_response:
-                    st.write(f"📥 **Received AI response for {tname}**")
+                    st.write(f"Received AI response for {tname}")
                     ai_data = json.loads(ai_response)
                     st.session_state.ai_response[tname] = ai_data
                     
-                    # Get totals mapping
                     totals_mapping = getTotal(ai_data)
                     
-                    # Create display DataFrame
                     display_df = count_table.reset_index().rename(columns={'index': 'Activity Name'})
                     display_df['Total'] = display_df['Activity Name'].map(
-                        lambda x: totals_mapping.get(x, display_df.loc[display_df['Activity Name'] == x, 'Count_Filtered'].iloc[0])
+                        lambda x: totals_mapping.get(x, display_df.loc[display_df['Activity Name'] == x, 'Closed_Checklist_Filtered'].iloc[0])
                     )
                     display_df['Category'] = display_df['Activity Name'].map(category_mapping)
-                    display_df['Asite_Count'] = display_df['Activity Name'].map(
-                        lambda x: asite_counts.get(tname, {}).get(x, 0)
+                    display_df['Asite_Closed_Count'] = display_df['Activity Name'].map(
+                        lambda x: asite_closed_counts.get(tname, {}).get(x, 0)
                     )
 
-                    st.write(f"**Activity Count with Totals for {tname}:**")
-                    st.dataframe(display_df[['Activity Name', 'Count_Filtered', 'Total', 'Asite_Count', 'Category']])
+                    st.write(f"Activity Count with Totals for {tname}:")
+                    st.dataframe(display_df[['Activity Name', 'Closed_Checklist_Filtered', 'Total', 'Asite_Closed_Count', 'Category']])
 
-                    # Display by category
                     categories_order = ['Civil Works', 'MEP Works', 'Interior Finishing Works']
                     for category in categories_order:
                         category_df = display_df[display_df['Category'] == category]
                         if not category_df.empty:
                             st.write(f"**{category} ({tname})**")
-                            st.dataframe(category_df[['Activity Name', 'Count_Filtered', 'Total', 'Asite_Count']])
+                            st.dataframe(category_df[['Activity Name', 'Closed_Checklist_Filtered', 'Total', 'Asite_Closed_Count']])
                 else:
-                    st.error(f"❌ Failed to get AI response for {tname}")
+                    st.error(f"Failed to get AI response for {tname}")
 
             except Exception as tower_error:
-                st.error(f"❌ Error processing {tname}: {str(tower_error)}")
+                st.error(f"Error processing {tname}: {str(tower_error)}")
                 import traceback
                 st.code(traceback.format_exc())
 
-        # Display External Development Activities table
         st.write("**External Development Activities (All Towers)**")
         external_dev_data = []
         
         for activity in external_development_activities:
             total_asite_count = 0
             for tower in unique_towers:
-                total_asite_count += asite_counts.get(tower, {}).get(activity, 0)
+                total_asite_count += asite_closed_counts.get(tower, {}).get(activity, 0)
             
             external_dev_data.append({
                 'Activity Name': activity,
@@ -1769,26 +1727,12 @@ def display_activity_count():
         external_dev_df = pd.DataFrame(external_dev_data)
         st.dataframe(external_dev_df)
 
-        st.write("✅ **DEBUG: display_activity_count completed successfully**")
+        st.write("display_activity_count completed successfully")
 
     except Exception as main_error:
-        st.error(f"❌ **MAIN ERROR in display_activity_count:** {str(main_error)}")
+        st.error(f"MAIN ERROR in display_activity_count: {str(main_error)}")
         import traceback
         st.code(traceback.format_exc())
-        
-        # Additional debugging info
-        st.write("**DEBUG: Session state keys:**")
-        st.write(list(st.session_state.keys()))
-        
-        st.write("**DEBUG: DataFrame types in session state:**")
-        for key, value in st.session_state.items():
-            if hasattr(value, 'columns'):
-                st.write(f"- {key}: {type(value)} with shape {value.shape}")
-            elif value is None:
-                st.write(f"- {key}: None")
-            else:
-                st.write(f"- {key}: {type(value)}")
-
 
 
 # Combined function for Initialize and Fetch Data
@@ -1904,35 +1848,32 @@ async def initialize_and_fetch_data(email, password):
 
 def generate_consolidated_Checklist_excel(structure_analysis=None, activity_counts=None):
     try:
-        # Add validation at the beginning
         if structure_analysis is None:
             structure_analysis = st.session_state.get('structure_analysis', None)
             if structure_analysis is None:
-                st.error("⚠️ No structure analysis data available.")
+                st.error("No structure analysis data available.")
                 logger.error("structure_analysis is None in generate_consolidated_Checklist_excel")
                 return None
         
         if activity_counts is None:
             activity_counts = st.session_state.get('ai_response', {})
             if not activity_counts:
-                st.error("⚠️ No activity counts data available.")
+                st.error("No activity counts data available.")
                 logger.error("activity_counts is empty in generate_consolidated_Checklist_excel")
                 return None
 
-        # Validate structure_analysis columns
         if not isinstance(structure_analysis, pd.DataFrame):
-            st.error("⚠️ structure_analysis is not a DataFrame.")
+            st.error("structure_analysis is not a DataFrame.")
             logger.error("structure_analysis is not a DataFrame")
             return None
 
-        expected_columns = ['tower_name', 'activityName', 'CompletedCount']
+        expected_columns = ['tower_name', 'activityName', 'ClosedChecklistCount']
         missing_columns = [col for col in expected_columns if col not in structure_analysis.columns]
         if missing_columns:
-            st.error(f"⚠️ Missing columns in structure_analysis: {missing_columns}")
+            st.error(f"Missing columns in structure_analysis: {missing_columns}")
             logger.error(f"Missing columns in structure_analysis: {missing_columns}")
             return None
 
-        # Transform activity_counts if it's a dictionary
         transformed_activity_counts = []
         if isinstance(activity_counts, dict):
             for tower, categories_data in activity_counts.items():
@@ -1946,13 +1887,11 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         else:
             transformed_activity_counts = activity_counts
 
-        # Validate transformed_activity_counts
         if not isinstance(transformed_activity_counts, list):
-            st.error("⚠️ Transformed activity_counts is not a list.")
+            st.error("Transformed activity_counts is not a list.")
             logger.error("Transformed activity_counts is not a list")
             return None
 
-        # Define categories and mappings with new structure
         categories = {
             "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
             "MEP Works": ["Plumbing Works", "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket"],
@@ -1983,51 +1922,48 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             "WMM": "WMM"
         }
 
-        # Define towers
-        towers = ["EWS Tower 1", "LIG Tower 3"]
+        towers = ["EWS Tower 1", "EWS Tower 2", "EWS Tower 3", "LIG Tower 1", "LIG Tower 2", "LIG Tower 3"]
 
-        # Ensure slabreport is populated
         if "slabreport" not in st.session_state or not st.session_state.slabreport:
             st.write("Fetching slab report data...")
-            GetSlabReport()  # This will populate st.session_state.slabreport
+            GetSlabReport()
 
-        # Parse slabreport to extract tracker counts
         try:
             if isinstance(st.session_state.slabreport, str) and st.session_state.slabreport == "No Data Found":
-                st.error("⚠️ No slab report data found in COS storage.")
+                st.error("No slab report data found in COS storage.")
                 logger.error("No slab report data found in st.session_state.slabreport")
                 return None
 
             slab_data = json.loads(st.session_state.slabreport) if isinstance(st.session_state.slabreport, str) else st.session_state.slabreport
             if not isinstance(slab_data, list):
-                st.error("⚠️ Invalid slab report data format: expected a list.")
+                st.error("Invalid slab report data format: expected a list.")
                 logger.error(f"Invalid slab report data format: {type(slab_data)}")
                 return None
         except json.JSONDecodeError as e:
-            st.error("⚠️ Failed to parse slab report data: invalid JSON.")
+            st.error("Failed to parse slab report data: invalid JSON.")
             logger.error(f"Failed to parse slab report data: {str(e)}")
             return None
         except Exception as e:
-            st.error("⚠️ Error processing slab report data.")
+            st.error("Error processing slab report data.")
             logger.error(f"Error processing slab report data: {str(e)}")
             return None
 
-        # Map slab report data to tracker_counts format
-        tracker_counts = []
+        tracker_completed_counts = []
         expected_towers = ["EWST1", "EWST2", "EWST3", "LIGT1", "LIGT2", "LIGT3"]
-        tower_counts = {tower: 0 for tower in expected_towers}  # Default to 0 for all towers
+        tower_counts = {tower: 0 for tower in expected_towers}
+
+        st.write("DEBUG - Raw slab_data:")
+        st.write(slab_data)
 
         for entry in slab_data:
             tower = entry.get("Tower")
-            count = entry.get("Slab Count") or entry.get("Green (1)") or entry.get("Count") or 0
+            count = entry.get("Slab Count", 0)
             if tower in expected_towers:
                 tower_counts[tower] = int(count) if isinstance(count, (int, float)) and not pd.isna(count) else 0
 
-        # Convert to tracker_counts format
         for tower, count in tower_counts.items():
-            tracker_counts.append({"Tower": tower, "Green (1)": count})
+            tracker_completed_counts.append({"Tower": tower, "Completed": count})
 
-        # Map tracker tower names to function tower names
         tower_mapping = {
             "EWST1": "EWS Tower 1",
             "EWST2": "EWS Tower 2",
@@ -2037,25 +1973,24 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             "LIGT3": "LIG Tower 3"
         }
 
-        # Create a dictionary of closed checklist counts from tracker_counts
-        closed_counts = {}
-        for entry in tracker_counts:
+        tracker_completed_mapping = {}
+        for entry in tracker_completed_counts:
             tracker_tower = entry.get("Tower")
-            green_count = entry.get("Green (1)", 0)
+            completed_count = entry.get("Completed", 0)
             mapped_tower = tower_mapping.get(tracker_tower)
             if mapped_tower:
-                closed_counts[mapped_tower] = green_count
+                tracker_completed_mapping[mapped_tower] = completed_count
+
+        st.write("DEBUG - Tracker Completed Mapping (Green Dates Count):")
+        st.write(tracker_completed_mapping)
 
         consolidated_rows = []
 
         for tower in towers:
-            tower_key = tower
-            # Get the closed checklist count for this tower from tracker_counts
-            tower_closed_count = closed_counts.get(tower, 0)
+            tower_completed_from_tracker = tracker_completed_mapping.get(tower, 0)
 
             for category, activities in categories.items():
                 if category == "External Development Activities":
-                    # Skip External Development for per-tower processing
                     continue
                     
                 if not activities:
@@ -2064,48 +1999,41 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                 for activity in activities:
                     asite_activity = cos_to_asite_mapping.get(activity, activity)
 
-                    # Set closed checklist to tower_closed_count only for "Concreting"
-                    if activity == "Concreting":
-                        closed_checklist = tower_closed_count
+                    if activity in ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"]:
+                        completed_work = tower_completed_from_tracker
                     else:
-                        closed_checklist = 0  # Default to 0 for all other activities
+                        completed_work = 0
+                        tower_data = [item for item in transformed_activity_counts if item.get("tower") == tower]
+                        for item in tower_data:
+                            if item.get("activity") == activity:
+                                completed_work = item.get("completed_count", 0)
+                                break
 
-                    completed_flats = 0
-                    # Use transformed_activity_counts for completed flats
-                    tower_data = [item for item in transformed_activity_counts if item.get("tower") == tower]
-                    if tower_data:
-                        if activity == "Plumbing Works":
-                            for item in tower_data:
-                                if item.get("activity") == "Min. count of UP-First Fix and CP-First Fix":
-                                    completed_flats = item.get("completed_count", 0)
-                                    break
-                        else:
-                            for item in tower_data:
-                                if item.get("activity") == activity:
-                                    completed_flats = item.get("completed_count", 0)
-                                    break
+                    closed_checklist = 0
+                    tower_data_asite = structure_analysis[structure_analysis['tower_name'] == tower]
+                    activity_data = tower_data_asite[tower_data_asite['activityName'] == asite_activity]
+                    if not activity_data.empty:
+                        closed_checklist = int(activity_data['ClosedChecklistCount'].iloc[0])
 
                     in_progress = 0
-                    # Calculate Open/Missing check list with new logic
-                    if completed_flats == 0 or closed_checklist > completed_flats:
+                    
+                    if completed_work == 0 or closed_checklist > completed_work:
                         open_missing = 0
                     else:
-                        open_missing = abs(completed_flats - closed_checklist)
+                        open_missing = abs(completed_work - closed_checklist)
 
                     consolidated_rows.append({
                         "Tower": tower,
                         "Category": category,
                         "Activity Name": asite_activity,
-                        "Completed Work*(Count of Flat)": completed_flats,
+                        "Completed Work*(Count of Flat)": completed_work,
                         "In progress": in_progress,
                         "Closed checklist": closed_checklist,
                         "Open/Missing check list": open_missing
                     })
 
-        # Add single External Development Activities table for all towers
         external_activities = categories["External Development Activities"]
         for activity in external_activities:
-            # Calculate total across all towers for external development
             total_completed = 0
             for tower in towers:
                 tower_data = [item for item in transformed_activity_counts if item.get("tower") == tower]
@@ -2120,7 +2048,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                 "Activity Name": activity,
                 "Completed Work*(Count of Flat)": total_completed,
                 "In progress": 0,
-                "Closed checklist": 0,  # Set to 0 since this isn't "Concreting"
+                "Closed checklist": 0,
                 "Open/Missing check list": 0
             })
 
@@ -2158,11 +2086,6 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         
         for tower, tower_group in grouped_by_tower:
             if tower == "All Towers":
-                # Special handling for External Development Activities
-                categories = ["External Development Activities"]
-                categories_per_row = 1
-                col_width = 6
-                
                 category = "External Development Activities"
                 cat_group = tower_group[tower_group['Category'] == category]
                 
@@ -2181,7 +2104,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                 
                 data_start_row = table_start_row + 2
                 total_pending = 0
-                
+
                 if not cat_group.empty and cat_group["Activity Name"].iloc[0] != "":
                     for idx, (_, row) in enumerate(cat_group.iterrows()):
                         current_data_row = data_start_row + idx
@@ -2192,7 +2115,6 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                         worksheet.write(current_data_row, table_start_col + 4, row["Open/Missing check list"], cell_format)
                         total_pending += row["Open/Missing check list"]
                     
-                    # Fill remaining rows up to 8 (for External Development Activities)
                     min_rows = 8
                     actual_rows = len(cat_group)
                     for empty_row in range(actual_rows, min_rows):
@@ -2215,17 +2137,11 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                 
                 current_row += 12
             else:
-                # Regular tower processing
                 grouped_by_category = tower_group.groupby('Category')
-                categories = list(grouped_by_category.groups.keys())
-                categories_per_row = 2
-                col_width = 6
                 
                 for i, (category, cat_group) in enumerate(grouped_by_category):
-                    row_offset = (i // categories_per_row) * 12
-                    col_offset = (i % categories_per_row) * col_width
-                    table_start_row = current_row + row_offset
-                    table_start_col = col_offset
+                    table_start_row = current_row
+                    table_start_col = 0
                     
                     category_title = f"{tower} {category} Checklist Status"
                     worksheet.merge_range(
@@ -2248,7 +2164,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                             worksheet.write(current_data_row, table_start_col + 2, row["In progress"], cell_format)
                             worksheet.write(current_data_row, table_start_col + 3, row["Closed checklist"], cell_format)
                             worksheet.write(current_data_row, table_start_col + 4, row["Open/Missing check list"], cell_format)
-                            total_pending += row["Open/Missing check list"]  # Sum the positive open/missing values
+                            total_pending += row["Open/Missing check list"]
                         
                         min_rows = 5
                         actual_rows = len(cat_group)
@@ -2269,22 +2185,19 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                         "Total pending check list", total_format
                     )
                     worksheet.write(total_row, table_start_col + 4, total_pending, total_format)
-                
-                max_categories_in_row = (len(categories) + categories_per_row - 1) // categories_per_row
-                current_row += max_categories_in_row * 12 + 3
+                    
+                    current_row += 10
         
         for col in range(12):
             worksheet.set_column(col, col, 18)
 
-        # Create Sheet 2: Checklist June with updated categories
+        # Create Sheet 2: Checklist June
         worksheet2 = workbook.add_worksheet("Checklist June")
         current_row = 0
 
-        # Write title
         worksheet2.write(current_row, 0, "Checklist: June", header_format)
         current_row += 1
 
-        # Write headers
         headers = [
             "Site",
             "Total of Missing & Open Checklist-Civil",
@@ -2295,33 +2208,29 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             worksheet2.write(current_row, col, header, header_format)
         current_row += 1
 
-        # Categorize towers into Civil and MEP based on new categories
         def map_category_to_type(category):
             if category in ["Civil Works", "Interior Finishing Works", "External Development Activities"]:
                 return "Civil"
             elif category in ["MEP Works"]:
                 return "MEP"
             else:
-                return "Civil"  # Default to Civil if unknown
+                return "Civil"
 
-        # Aggregate open/missing counts by tower and type (Civil/MEP)
         summary_data = {}
         for _, row in df.iterrows():
             tower = row["Tower"]
             category = row["Category"]
             open_missing = row["Open/Missing check list"]
             
-            # Skip "All Towers" entries for this summary
             if tower == "All Towers":
                 continue
                 
-            # Convert tower name to display format (e.g., "EWS Tower 1" -> "ELigo-EWS Tower 01")
             if "External Development" in category:
                 site_name = f"External Development-{tower}"
             else:
                 tower_type, tower_num = tower.split(" Tower ")
                 if len(tower_num) == 1:
-                    tower_num = f"0{tower_num}"  # Pad single digits
+                    tower_num = f"0{tower_num}"
                 site_name = f"ELigo-{tower_type} Tower {tower_num}"
 
             type_ = map_category_to_type(category)
@@ -2333,7 +2242,6 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
 
         logger.info(f"Summary data for Sheet 2: {summary_data}")
 
-        # Write summary data to Sheet 2
         for site_name, counts in sorted(summary_data.items()):
             civil_count = counts["Civil"]
             mep_count = counts["MEP"]
@@ -2346,7 +2254,6 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             
             current_row += 1
 
-        # Auto-adjust column widths for Sheet 2
         for col in range(4):
             max_length = 0
             for row in range(current_row):
@@ -2362,14 +2269,13 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             adjusted_width = max_length + 2
             worksheet2.set_column(col, col, adjusted_width)
 
-        # Close the workbook
         workbook.close()
         output.seek(0)
         return output
 
     except Exception as e:
         logger.error(f"Error generating consolidated Excel: {str(e)}")
-        st.error(f"⚠️ Error generating Excel file: {str(e)}")
+        st.error(f"Error generating Excel file: {str(e)}")
         return None
 
 # Combined function to handle analysis and display
