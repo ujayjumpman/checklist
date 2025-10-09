@@ -1,5 +1,4 @@
-#!/usr/bin/env python   
-# -*- coding: utf-8 -*-
+
 import streamlit as st
 import requests
 from veridia1 import *
@@ -134,7 +133,7 @@ def show_progress():
     """Display progress bar and current step"""
     if st.session_state.progress > 0:
         st.progress(st.session_state.progress / 100)
-        st.info(f"🔄 {st.session_state.current_step} ({st.session_state.progress}%)")
+        st.info(f" {st.session_state.current_step} ({st.session_state.progress}%)")
 
 # Safe logging function that doesn't trigger reruns
 def safe_log(message, level="info"):
@@ -298,8 +297,11 @@ async def initialize_and_fetch_data(email, password):
                         response = cos_client.get_object(Bucket=COS_BUCKET, Key=selected_file)
                         file_bytes = io.BytesIO(response['Body'].read())
                         result = process_file(file_bytes, selected_file)
-                        if len(result) == 2:  # Handle Tower 4 split
+                        
+                        if len(result) == 2:  # Handle Tower 4 split or Tower 5/7
                             (df_first, tname_first), (df_second, tname_second) = result
+                            
+                            # Process first dataframe
                             if df_first is not None and not df_first.empty:
                                 if "Tower 4(A)" in tname_first:
                                     st.session_state.cos_df_tower4a = df_first
@@ -313,6 +315,13 @@ async def initialize_and_fetch_data(email, password):
                                     st.session_state.cos_df_tower5 = df_first
                                     st.session_state.cos_tname_tower5 = tname_first
                                     safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
+                                elif "Tower 7" in tname_first:
+                                    st.session_state.cos_df_tower7 = df_first
+                                    st.session_state.cos_tname_tower7 = tname_first
+                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
+                                    st.write(f"✓ Tower 7 COS data loaded: {len(df_first)} rows")
+                            
+                            # Process second dataframe (if exists, for Tower 4 split)
                             if df_second is not None and not df_second.empty:
                                 if "Tower 4(A)" in tname_second:
                                     st.session_state.cos_df_tower4a = df_second
@@ -322,25 +331,21 @@ async def initialize_and_fetch_data(email, password):
                                     st.session_state.cos_df_tower4b = df_second
                                     st.session_state.cos_tname_tower4b = tname_second
                                     safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
-                        elif len(result) == 1:  # Handle Tower 5
+                                elif "Tower 5" in tname_second:
+                                    st.session_state.cos_df_tower5 = df_second
+                                    st.session_state.cos_tname_tower5 = tname_second
+                                    safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
+                                elif "Tower 7" in tname_second:
+                                    st.session_state.cos_df_tower7 = df_second
+                                    st.session_state.cos_tname_tower7 = tname_second
+                                    safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
+                                    st.write(f"✓ Tower 7 COS data loaded: {len(df_second)} rows")
+                        
+                        elif len(result) == 1:  # Handle Slab Cycle
                             (df_first, tname_first) = result[0]
-                            if df_first is not None and not df_first.empty:
-                                if "Tower 4(A)" in tname_first:
-                                    st.session_state.cos_df_tower4a = df_first
-                                    st.session_state.cos_tname_tower4a = tname_first
-                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
-                                elif "Tower 4(B)" in tname_first:
-                                    st.session_state.cos_df_tower4b = df_first
-                                    st.session_state.cos_tname_tower4b = tname_first
-                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
-                                elif "Tower 5" in tname_first:
-                                    st.session_state.cos_df_tower5 = df_first
-                                    st.session_state.cos_tname_tower5 = tname_first
-                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
-                            if "Tower 5" in selected_file:
-                                safe_log("Processed Tower 5 data successfully")
-                            else:
-                                safe_log(f"No secondary data (Tower 4 split) for {selected_file}", "warning")
+                            if df_first is not None and not df_first.empty and tname_first == "Slab Cycle":
+                                st.session_state.slab_df = df_first
+                                safe_log(f"Processed Slab Cycle data - {len(df_first)} rows")
                         else:
                             safe_log(f"Unexpected result format for {selected_file}", "warning")
                     except Exception as e:
@@ -747,7 +752,7 @@ async def Get_Activity():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Finishing Activity data: {str(e)}")
+                st.error(f" Error fetching Finishing Activity data: {str(e)}")
                 logger.error(f"Finishing Activity fetch failed: {str(e)}")
                 break
 
@@ -773,7 +778,7 @@ async def Get_Activity():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Structure Activity data: {str(e)}")
+                st.error(f" Error fetching Structure Activity data: {str(e)}")
                 logger.error(f"Structure Activity fetch failed: {str(e)}")
                 break
 
@@ -799,7 +804,7 @@ async def Get_Activity():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching External Development Activity data: {str(e)}")
+                st.error(f" Error fetching External Development Activity data: {str(e)}")
                 logger.error(f"External Development Activity fetch failed: {str(e)}")
                 break
 
@@ -826,7 +831,7 @@ async def Get_Activity():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Lift Activity data: {str(e)}")
+                st.error(f" Error fetching Lift Activity data: {str(e)}")
                 logger.error(f"Lift Activity fetch failed: {str(e)}")
                 all_lift_activity_data = []  # Fallback to empty list
                 break
@@ -853,7 +858,7 @@ async def Get_Activity():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Common Area Finishing Activity data: {str(e)}")
+                st.error(f" Error fetching Common Area Finishing Activity data: {str(e)}")
                 logger.error(f"Common Area Finishing Activity fetch failed: {str(e)}")
                 break
 
@@ -942,7 +947,7 @@ async def Get_Location():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Finishing Location data: {str(e)}")
+                st.error(f" Error fetching Finishing Location data: {str(e)}")
                 logger.error(f"Finishing Location fetch failed: {str(e)}")
                 break
 
@@ -979,7 +984,7 @@ async def Get_Location():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Structure Location data: {str(e)}")
+                st.error(f" Error fetching Structure Location data: {str(e)}")
                 logger.error(f"Structure Location fetch failed: {str(e)}")
                 break
 
@@ -1016,7 +1021,7 @@ async def Get_Location():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching External Development Location data: {str(e)}")
+                st.error(f" Error fetching External Development Location data: {str(e)}")
                 logger.error(f"External Development Location fetch failed: {str(e)}")
                 break
 
@@ -1054,7 +1059,7 @@ async def Get_Location():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Lift Location data: {str(e)}")
+                st.error(f" Error fetching Lift Location data: {str(e)}")
                 logger.error(f"Lift Location fetch failed: {str(e)}")
                 all_lift_location_data = []  # Fallback to empty list
                 break
@@ -1092,7 +1097,7 @@ async def Get_Location():
                 start_record += record_limit
                 await asyncio.sleep(1)  # Rate limiting
             except Exception as e:
-                st.error(f"❌ Error fetching Common Area Finishing Location data: {str(e)}")
+                st.error(f" Error fetching Common Area Finishing Location data: {str(e)}")
                 logger.error(f"Common Area Finishing Location fetch failed: {str(e)}")
                 break
 
@@ -1104,15 +1109,15 @@ async def Get_Location():
 
     # Validate name field
     if 'name' in finishing_df.columns and finishing_df['name'].isna().all():
-        st.error("❌ All 'name' values in Finishing Location data are missing or empty!")
+        st.error(" All 'name' values in Finishing Location data are missing or empty!")
     if 'name' in structure_df.columns and structure_df['name'].isna().all():
-        st.error("❌ All 'name' values in Structure Location data are missing or empty!")
+        st.error(" All 'name' values in Structure Location data are missing or empty!")
     if 'name' in external_df.columns and external_df['name'].isna().all():
-        st.error("❌ All 'name' values in External Development Location data are missing or empty!")
+        st.error(" All 'name' values in External Development Location data are missing or empty!")
     if 'name' in lift_df.columns and lift_df['name'].isna().all():
-        st.error("❌ All 'name' values in Lift Location data are missing or empty!")
+        st.error(" All 'name' values in Lift Location data are missing or empty!")
     if 'name' in common_area_df.columns and common_area_df['name'].isna().all():
-        st.error("❌ All 'name' values in Common Area Finishing Location data are missing or empty!")
+        st.error(" All 'name' values in Common Area Finishing Location data are missing or empty!")
 
     st.write("VERIDIA FINISHING LOCATION/MODULE DATA")
     st.write(f"Total records: {len(finishing_df)}")
@@ -1187,7 +1192,7 @@ def process_manually(analysis_df, total, dataset_name, chunk_size=1000, max_work
                 status_text.text(f"Processed chunk {completed_chunks} of {len(chunks)} ({progress_percent:.1%} complete)")
             except Exception as e:
                 logger.error(f"Error processing chunk {chunk_idx + 1} for {dataset_name}: {str(e)}")
-                st.error(f"❌ Error processing chunk {chunk_idx + 1}: {str(e)}")
+                st.error(f" Error processing chunk {chunk_idx + 1}: {str(e)}")
 
     parsed_data = {}
     for chunk_idx in sorted(chunk_results.keys()):
@@ -1310,8 +1315,8 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
 
     # Define expected Asite activities for count_table
     asite_activities = [
-        "Wall Conducting", "Plumbing Works", "POP & Gypsum Plaster", "Wiring & Switch Socket",
-        "Slab Conducting", "Electrical Cable", "Door/Window Frame", "Waterproofing - Sunken",
+        "Wall Conduting", "Plumbing Works", "POP & Gypsum Plaster", "Wiring & Switch Socket",
+        "Slab Conduting", "Electrical Cable", "Door/Window Frame", "Waterproofing - Sunken",
         "Wall Tile", "Floor Tile", "Door/Window Shutter", "Shuttering", "Reinforcement",
         "Sewer Line", "Rain Water/Storm Line", "Granular Sub-base", "WMM",
         "Saucer drain/Paver block", "Kerb Stone", "Concreting"
@@ -1333,7 +1338,7 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
 
     if completed['name'].isna().all():
         logger.error(f"All 'name' values are missing in {dataset_name} data after merge!")
-        st.error(f"❌ All 'name' values are missing in {dataset_name} data after merge! Check location data.")
+        st.error(f" All 'name' values are missing in {dataset_name} data after merge! Check location data.")
         completed['name'] = 'Unknown'
     else:
         completed['name'] = completed['name'].fillna('Unknown')
@@ -1356,7 +1361,7 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
             "Waterproofing Works": "Waterproofing - Sunken",
             
             # Wall Conduiting - match "EL-First Fix", exclude C-prefixed versions
-            "EL-First Fix": "Wall Conducting",
+            "EL-First Fix": "Wall Conduting",
         }
         
         # Check for exact matches first
@@ -1364,18 +1369,23 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
             return exact_matches[name]
         
         # Exclude C-prefixed versions for specific activities
-        excluded_patterns = [
-            "C-Gypsum and POP Punning",
-            "C-EL-First Fix"
-        ]
+        # excluded_patterns = [
+        #     "C-Gypsum and POP Punning",
+        #     "C-EL-First Fix"
+        # ]
         
-        if name in excluded_patterns:
-            return "EXCLUDED_ACTIVITY"  # Mark for exclusion
+        # if name in excluded_patterns:
+        #     return "EXCLUDED_ACTIVITY"
+        if isinstance(name, str):
+            if name.strip().startswith("C-") and ("EL-First Fix" in name or "Gypsum and POP Punning" in name):
+                return "EXCLUDED_ACTIVITY"
+
+        # Mark for exclusion
         
         # Existing typo corrections for other activities
         typo_corrections = {
-            "Wall Conduting": "Wall Conducting",
-            "Slab conduting": "Slab Conducting",
+            "Wall Conduting": "Wall Conduting",
+            "Slab conduting": "Slab Conduting",
             "WallTile": "Wall Tile",
             "FloorTile": "Floor Tile",
             "wall tile": "Wall Tile",
@@ -1493,7 +1503,7 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
         if not completed.empty:
             logger.debug(f"Paths that passed roof slab filtering (excluding Stilt):")
             for path in sorted(completed['full_path'].unique()):
-                logger.debug(f" ✓ {path}")
+                logger.debug(f" âœ“ {path}")
         else:
             logger.warning(f"No paths contain 'roof slab' (excluding Stilt) in {dataset_name} dataset")
             logger.debug("Checking for similar patterns...")
@@ -1596,7 +1606,7 @@ def AnalyzeStatusManually(email=None, password=None):
     logger = logging.getLogger(__name__)
     
     if 'sessionid' not in st.session_state:
-        st.error("❌ Please log in first!")
+        st.error("Please log in first!")
         return
 
     # Validate COS data
@@ -1611,6 +1621,7 @@ def AnalyzeStatusManually(email=None, password=None):
         if data is None or not isinstance(data, pd.DataFrame) or data.empty:
             st.session_state[data_key] = pd.DataFrame()
             st.session_state[name_key] = tower
+            st.write(f"{tower} data: EMPTY or MISSING")
         else:
             st.write(f"{tower} data: {len(data)} rows")
             logger.info(f"{tower} data: {len(data)} rows")
@@ -1626,7 +1637,7 @@ def AnalyzeStatusManually(email=None, password=None):
     
     for data_key in required_data:
         if data_key not in st.session_state or st.session_state[data_key] is None:
-            st.error(f"❌ Missing or None data: {data_key}")
+            st.error(f"Missing or None data: {data_key}")
             logger.error(f"Missing or None data: {data_key}")
             return
 
@@ -1650,10 +1661,10 @@ def AnalyzeStatusManually(email=None, password=None):
         common_area_locations = st.session_state.common_area_location_data
         
     except KeyError as e:
-        st.error(f"❌ Missing session state data: {str(e)}")
+        st.error(f"Missing session state data: {str(e)}")
         return
 
-    # Process COS data - UPDATED SECTION WITH ACTIVITY FILTERING
+    # Process COS data
     st.write("### Processing COS Data...")
     cos_data = []
     first_fix_counts = {}
@@ -1673,9 +1684,8 @@ def AnalyzeStatusManually(email=None, password=None):
         ('cos_tname_tower7', 'cos_df_tower7')
     ]
 
-    # Initialize tower names and data if missing - FIXED
+    # Initialize tower names and data if missing
     for tname_key, tdata_key in cos_datasets:
-        # Force set the tower name from mapping, don't rely on session state
         st.session_state[tname_key] = tower_name_mapping.get(tname_key, f"Tower {tname_key.replace('cos_tname_', '').upper()}")
         if tdata_key not in st.session_state:
             st.session_state[tdata_key] = pd.DataFrame()
@@ -1685,7 +1695,11 @@ def AnalyzeStatusManually(email=None, password=None):
     for tname_key, tdata_key in cos_datasets:
         tower_name = st.session_state.get(tname_key, "NOT_FOUND")
         data = st.session_state.get(tdata_key, "NOT_FOUND")
-        st.write(f"Tower: {tower_name} | Data rows: {len(data) if isinstance(data, pd.DataFrame) else 'N/A'}")
+        data_len = len(data) if isinstance(data, pd.DataFrame) else 'N/A'
+        st.write(f"Tower: {tower_name} | Data rows: {data_len}")
+        if tower_name == "Tower 7" and isinstance(data, pd.DataFrame) and not data.empty:
+            st.write(f"Tower 7 has {data_len} rows of COS data")
+            logger.info(f"Tower 7 COS data confirmed: {data_len} rows")
 
     activities_list = [
         "EL-First Fix", "UP-First Fix", "CP-First Fix", "Gypsum & POP Punning", "EL-Second Fix",
@@ -1693,50 +1707,41 @@ def AnalyzeStatusManually(email=None, password=None):
         "Sewer Line", "Storm Line", "GSB", "WMM", "Stamp Concrete", "Saucer drain", "Kerb Stone"
     ]
 
-    # UPDATED COS PROCESSING WITH ACTIVITY FILTERING
+    # Process COS data for each tower
     for tname_key, tdata_key in cos_datasets:
-        # FIXED: Always use the mapping, never rely on potentially None session state values
         tname = tower_name_mapping.get(tname_key, f"Tower {tname_key.replace('cos_tname_', '').upper()}")
         tower_data = st.session_state[tdata_key]
 
-        # Initialize first fix counts for this tower
         first_fix_counts[tname] = {}
         st.write(f"Processing {tname} (key: {tname_key})")
 
         if tower_data is not None and isinstance(tower_data, pd.DataFrame) and not tower_data.empty:
             tower_data = tower_data.copy()
             
-            # Apply exact activity name matching for COS data
             def normalize_cos_activity_name(name):
-                """Normalize COS activity names with exact matching"""
                 if not isinstance(name, str):
                     return name
                     
-                # Exact matches for COS activities
                 cos_exact_matches = {
                     "Gypsum and POP Punning": "Gypsum & POP Punning",
                     "Water Proofing Works": "Waterproofing Works", 
-                    "EL-First Fix": "EL-First Fix"  # Keep as is for COS
+                    "EL-First Fix": "EL-First Fix"
                 }
                 
-                # Check for exact matches
                 if name in cos_exact_matches:
                     return cos_exact_matches[name]
                 
-                # Exclude C-prefixed versions
                 if name.startswith("C-"):
                     return "EXCLUDED_ACTIVITY"
                     
                 return name
 
-            # Check if required columns exist
             required_columns = ['Actual Finish', 'Activity Name']
             missing_columns = [col for col in required_columns if col not in tower_data.columns]
             
             if missing_columns:
                 st.warning(f"Missing columns in {tname}: {missing_columns}")
                 st.write(f"Available columns: {list(tower_data.columns)}")
-                # Use fallback processing if columns are missing
                 for activity in activities_list:
                     cos_data.append({
                         "Tower": tname,
@@ -1746,13 +1751,10 @@ def AnalyzeStatusManually(email=None, password=None):
                     if activity in ["UP-First Fix", "CP-First Fix"]:
                         first_fix_counts[tname][activity] = 0
             else:
-                # Apply normalization if Activity Name column exists
                 if 'Activity Name' in tower_data.columns:
                     tower_data['Activity Name'] = tower_data['Activity Name'].apply(normalize_cos_activity_name)
-                    # Filter out excluded activities
                     tower_data = tower_data[tower_data['Activity Name'] != 'EXCLUDED_ACTIVITY']
                 
-                # Normal processing with proper columns
                 tower_data['Actual Finish'] = pd.to_datetime(tower_data['Actual Finish'], errors='coerce')
                 tower_data_filtered = tower_data[~pd.isna(tower_data['Actual Finish'])].copy()
                 logger.info(f"Processing {tname}: {len(tower_data_filtered)} rows with actual finish dates")
@@ -1769,7 +1771,6 @@ def AnalyzeStatusManually(email=None, password=None):
                     if activity in ["UP-First Fix", "CP-First Fix"]:
                         first_fix_counts[tname][activity] = count
         else:
-            # Handle empty or missing data
             st.write(f"No data available for {tname}, setting all counts to 0")
             for activity in activities_list:
                 cos_data.append({
@@ -1792,15 +1793,27 @@ def AnalyzeStatusManually(email=None, password=None):
         })
         logger.info(f"{tname} - Min. count of UP-First Fix and CP-First Fix: {combined_count}")
 
-    # Debug: Print tower names being used
     st.write("### Debug: Tower Names Used")
     unique_towers = list(set([item["Tower"] for item in cos_data]))
     st.write(f"Unique tower names in COS data: {unique_towers}")
+    if "Tower 7" in unique_towers:
+        st.write("Tower 7 confirmed in COS data")
+        tower7_data = [item for item in cos_data if item["Tower"] == "Tower 7"]
+        st.write(f"Tower 7 activities count: {len(tower7_data)}")
 
     cos_df = pd.DataFrame(cos_data)
     logger.info(f"COS DataFrame:\n{cos_df.to_string()}")
     st.write("### COS DataFrame (Debug):")
     st.write(cos_df)
+    
+    if "Tower 7" in cos_df['Tower'].values:
+        st.write("Tower 7 is present in final COS DataFrame")
+        tower7_cos = cos_df[cos_df['Tower'] == 'Tower 7']
+        st.write(f"Tower 7 COS entries: {len(tower7_cos)}")
+        st.write("Tower 7 COS data sample:")
+        st.write(tower7_cos.head(10))
+    else:
+        st.error("Tower 7 is MISSING from final COS DataFrame!")
 
     # Process Asite data
     st.write("### Processing Asite Data...")
@@ -1814,21 +1827,12 @@ def AnalyzeStatusManually(email=None, password=None):
     
     asite_data = []
 
-    # Display raw data for debugging
     st.write("### Raw Asite Data (Debug):")
     for dataset_name, df, activity_df, location_df in datasets:
         if df is not None and not df.empty:
             st.write(f"{dataset_name}: {len(df)} records")
             st.write(f"Columns: {list(df.columns)}")
             st.write(df.head(2))
-        if activity_df is not None and not activity_df.empty:
-            st.write(f"{dataset_name} Activity: {len(activity_df)} records") 
-            st.write(f"Activity Columns: {list(activity_df.columns)}")
-            st.write(activity_df.head(2))
-        if location_df is not None and not location_df.empty:
-            st.write(f"{dataset_name} Location: {len(location_df)} records")
-            st.write(f"Location Columns: {list(location_df.columns)}")
-            st.write(location_df.head(2))
 
     for dataset_name, df, activity_df, location_df in datasets:
         st.write(f"Debug: Processing {dataset_name}...")
@@ -1838,19 +1842,17 @@ def AnalyzeStatusManually(email=None, password=None):
 
         if df is None or df.empty or activity_df is None or activity_df.empty or location_df is None or location_df.empty:
             st.warning(f"Skipping {dataset_name} - missing or empty data")
-            logger.warning(f"Skipping {dataset_name} - DataFrame empty: {df is None or df.empty}, Activity empty: {activity_df is None or activity_df.empty}, Location empty: {location_df is None or location_df.empty}")
+            logger.warning(f"Skipping {dataset_name}")
             continue
 
-        # Check for activity identifier columns
-        possible_activity_cols = ['activitySeq', 'activityId', 'seq', 'activity_seq', 'id', 'ActivityID', 'ActivityId', 'taskId', 'activity_id', 'activity_code', 'task_code', 'work_id']
+        possible_activity_cols = ['activitySeq', 'activityId', 'seq', 'activity_seq', 'id', 'ActivityID', 'ActivityId', 'taskId', 'activity_id']
         activity_col = None
         for col in possible_activity_cols:
             if col in df.columns:
                 activity_col = col
                 break
 
-        # Check for activity name columns  
-        possible_name_cols = ['activityName', 'ActivityName', 'activity_name', 'Activity_Name', 'name', 'description', 'taskName', 'task_desc', 'work_name', 'activity_desc']
+        possible_name_cols = ['activityName', 'ActivityName', 'activity_name', 'Activity_Name', 'name', 'description', 'taskName']
         activity_name_col = None
         for col in possible_name_cols:
             if col in df.columns:
@@ -1858,27 +1860,8 @@ def AnalyzeStatusManually(email=None, password=None):
                 break
 
         if activity_col is None and activity_name_col is None:
-            st.error(f"No activity identifier or name column found in {dataset_name} data. Tried identifiers: {possible_activity_cols}, names: {possible_name_cols}")
-            logger.error(f"No activity identifier or name column found in {dataset_name} data. Columns: {list(df.columns)}")
-            st.warning(f"Processing {dataset_name} with location-based counts as fallback. Please check Asite API schema in initialize_and_fetch_data.")
-            
-            # Fallback: Count completed locations by tower
-            if 'statusName' in df.columns and 'qiLocationId' in df.columns:
-                completed = df[df['statusName'] == 'Completed'].copy()
-                if not completed.empty:
-                    tower_counts = completed.groupby('qiLocationId')['statusName'].count().reset_index(name='Count')
-                    for _, row in tower_counts.iterrows():
-                        # You need to implement get_tower_name function or use a mapping
-                        tower_name = f"Location {row['qiLocationId']}"  # Placeholder
-                        asite_data.append({
-                            "Tower": tower_name,
-                            "Activity Name": f"Completed Location {row['qiLocationId']}",
-                            "Count": row['Count'],
-                            "Dataset": dataset_name
-                        })
-                    st.write(f"Fallback processed {dataset_name}: {len(tower_counts)} locations")
-                else:
-                    st.warning(f"No completed activities found for {dataset_name} fallback")
+            st.error(f"No activity identifier or name column found in {dataset_name} data.")
+            logger.error(f"No activity identifier found in {dataset_name}")
             continue
         else:
             if activity_col and activity_col != 'activitySeq':
@@ -1889,7 +1872,6 @@ def AnalyzeStatusManually(email=None, password=None):
                 st.warning(f"Renaming {activity_name_col} to activityName in {dataset_name} data") 
                 df = df.rename(columns={activity_name_col: 'activityName'})
 
-            # Fallback: Use activityName if activitySeq is missing
             if activity_col is None and activity_name_col:
                 st.warning(f"Using activityName directly for {dataset_name} without activity merge")
                 df['activitySeq'] = df['activityName']
@@ -1898,35 +1880,13 @@ def AnalyzeStatusManually(email=None, password=None):
                     'activityName': df['activityName'].unique()
                 })
 
-        # Validate required columns
         required_cols = ['statusName', 'qiLocationId']
         if activity_col:
             required_cols.append('activitySeq')
-        if activity_name_col:
-            required_cols.append('activityName')
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             st.error(f"Missing columns in {dataset_name} data: {missing_cols}")
-            logger.error(f"Missing columns in {dataset_name} data: {missing_cols}")
             continue
-
-        required_activity_cols = ['activitySeq', 'activityName']
-        missing_activity_cols = [col for col in required_activity_cols if col not in activity_df.columns]
-        if missing_activity_cols:
-            st.error(f"Missing columns in {dataset_name} activity data: {missing_activity_cols}")
-            logger.error(f"Missing columns in {dataset_name} activity data: {missing_activity_cols}")
-            continue
-
-        required_location_cols = ['qiLocationId', 'name']
-        missing_location_cols = [col for col in required_location_cols if col not in location_df.columns]
-        if missing_location_cols:
-            st.error(f"Missing columns in {dataset_name} location data: {missing_location_cols}")
-            logger.error(f"Missing columns in {dataset_name} location data: {missing_location_cols}")
-            continue
-
-        st.write(f" - DataFrame columns: {list(df.columns)}")
-        st.write(f" - Activity DataFrame columns: {list(activity_df.columns)}")
-        st.write(f" - Location DataFrame columns: {list(location_df.columns)}")
 
         try:
             analysis_df, total_completed, count_table = process_data(df, activity_df, location_df, dataset_name)
@@ -1942,7 +1902,6 @@ def AnalyzeStatusManually(email=None, password=None):
                 processed_data = process_manually(analysis_df, total_completed, dataset_name)
                 st.write(f"Debug: {dataset_name} processed data:")
                 st.write(f" - Towers: {list(processed_data['towers'].keys())}")
-                st.write(f" - Total activities: {sum(len(activities) for activities in processed_data['towers'].values())}")
 
                 for tower_name, activities in processed_data['towers'].items():
                     for activity_name, count in activities.items():
@@ -1953,22 +1912,32 @@ def AnalyzeStatusManually(email=None, password=None):
                             "Dataset": dataset_name
                         })
                 
-                st.write(f"Processed {dataset_name}: {len(processed_data['towers'])} towers, {sum(len(activities) for activities in processed_data['towers'].values())} activities")
+                st.write(f"Processed {dataset_name}: {len(processed_data['towers'])} towers")
             else:
                 st.warning(f"No completed activities found for {dataset_name}")
-                logger.warning(f"No completed activities found for {dataset_name}")
                 
         except Exception as e:
             st.error(f"Error processing {dataset_name}: {str(e)}")
             logger.error(f"Error processing {dataset_name}: {str(e)}", exc_info=True)
-            st.error(f"Full traceback: {traceback.format_exc()}")
 
     asite_df = pd.DataFrame(asite_data)
     logger.info(f"Asite DataFrame:\n{asite_df.to_string()}")
     st.write("### Asite DataFrame (Debug):")
     st.write(asite_df)
+    
+    # CRITICAL DEBUG FOR TOWER 7
+    st.write("### Tower 7 Verification")
+    if "Tower 7" in asite_df['Tower'].values:
+        st.write("Tower 7 is present in Asite DataFrame")
+        tower7_asite = asite_df[asite_df['Tower'] == 'Tower 7']
+        st.write(f"Tower 7 Asite entries: {len(tower7_asite)}")
+        st.write("Tower 7 Asite activities:")
+        st.write(tower7_asite[['Activity Name', 'Count']])
+    else:
+        st.error("Tower 7 is MISSING from Asite DataFrame!")
+        st.write("This means Tower 7 data was not processed from Asite datasets.")
 
-    # Combine data for AI processing
+    # Combine data
     combined_data = {
         "COS": cos_df,
         "Asite": asite_df
@@ -1979,13 +1948,11 @@ def AnalyzeStatusManually(email=None, password=None):
         GetSlabReport()
     except Exception as e:
         st.warning(f"Error fetching slab report: {str(e)}")
-        logger.warning(f"Error fetching slab report: {str(e)}")
 
     slab_data = st.session_state.get('slabreport', pd.DataFrame())
     if isinstance(slab_data, dict) and 'COS' in slab_data and 'Asite' in slab_data:
         st.warning("Slab data appears to be combined data structure, using empty slab data")
         slab_data = pd.DataFrame()
-        logger.warning("Slab data appears to be combined data structure, using empty slab data")
 
     logger.info(f"Slab data for AI generation: {slab_data}")
 
@@ -1994,7 +1961,6 @@ def AnalyzeStatusManually(email=None, password=None):
     try:
         ai_response = generatePrompt(combined_data, slab_data)
         if ai_response and ai_response != combined_data:
-            # Ensure ai_response is stored as a JSON string
             if isinstance(ai_response, dict):
                 st.session_state.ai_response = json.dumps(ai_response)
             else:
@@ -2003,7 +1969,6 @@ def AnalyzeStatusManually(email=None, password=None):
             logger.info("AI analysis completed successfully")
         else:
             st.warning("AI generation failed, using fallback data")
-            # Create fallback structure
             fallback_data = {
                 "COS": cos_df.to_dict('records') if not cos_df.empty else [],
                 "Asite": asite_df.to_dict('records') if not asite_df.empty else [],
@@ -2013,7 +1978,6 @@ def AnalyzeStatusManually(email=None, password=None):
     except Exception as e:
         st.error(f"Error generating AI analysis: {str(e)}")
         logger.error(f"Error generating AI analysis: {str(e)}")
-        # Create fallback structure
         fallback_data = {
             "COS": cos_df.to_dict('records') if not cos_df.empty else [],
             "Asite": asite_df.to_dict('records') if not asite_df.empty else [],
@@ -2024,19 +1988,18 @@ def AnalyzeStatusManually(email=None, password=None):
     end_time = time.time()
     st.write(f"Total execution time: {end_time - start_time:.2f} seconds")
 
-
     
 # COS File Fetching Function
 def get_cos_files():
     try:
         cos_client = initialize_cos_client()
         if not cos_client:
-            st.error("❌ Failed to initialize COS client.")
+            st.error(" Failed to initialize COS client.")
             return []
 
         response = cos_client.list_objects_v2(Bucket=COS_BUCKET, Prefix="Veridia/")
         if 'Contents' not in response:
-            st.error(f"❌ No files found in the 'Veridia' folder of bucket '{COS_BUCKET}'. Please ensure the folder exists and contains files.")
+            st.error(f" No files found in the 'Veridia' folder of bucket '{COS_BUCKET}'. Please ensure the folder exists and contains files.")
             logger.error("No objects found in Veridia folder")
             return []
 
@@ -2102,7 +2065,7 @@ def get_cos_files():
                 })
 
         if not file_info:
-            st.error("❌ No Excel files matched the expected patterns in the 'Veridia' folder. Expected formats: 'Tower 4/5 Finishing Tracker(date).xlsx' or 'Veridia Anti. Slab Cycle With Possesion dates*.xlsx'.")
+            st.error(" No Excel files matched the expected patterns in the 'Veridia' folder. Expected formats: 'Tower 4/5 Finishing Tracker(date).xlsx' or 'Veridia Anti. Slab Cycle With Possesion dates*.xlsx'.")
             logger.error("No files matched the expected patterns")
             return []
 
@@ -2125,14 +2088,14 @@ def get_cos_files():
             files = [info['key'] for info in finishing_files.values()]
 
         if not files:
-            st.error("❌ No valid Excel files found for Tower 4, Tower 5, or Anti. Slab Cycle after filtering.")
+            st.error(" No valid Excel files found for Tower 4, Tower 5, or Anti. Slab Cycle after filtering.")
             logger.error("No valid files after filtering")
             return []
 
         st.success(f"Found {len(files)} matching files: {', '.join(files)}")
         return files
     except Exception as e:
-        st.error(f"❌ Error fetching COS files: {str(e)}")
+        st.error(f" Error fetching COS files: {str(e)}")
         logger.error(f"Error fetching COS files: {str(e)}")
         return []
 
@@ -2287,7 +2250,7 @@ def process_file(file_stream, filename):
                 logger.error(f"Error processing sheet {sheet_name} in {filename}: {str(e)}")
                 return (None, None), (None, None)
         else:
-            # Handle Tower 4 or Tower 5 Finishing Tracker files
+            # Handle Tower 4, Tower 5, or Tower 7 Finishing Tracker files
             tower_num = None
             if "Tower 5" in filename or "Tower5" in filename:
                 tower_num = "5"
@@ -2402,6 +2365,11 @@ def process_file(file_stream, filename):
                     st.write(f"Tower 4(B) (Modules M1-M4) - {len(df_tower4b)} rows:")
                     st.write(df_tower4b.head())
                     return (df_tower4a, "Tower 4(A)"), (df_tower4b, "Tower 4(B)")
+                elif tower_num == "7":
+                    st.write(f"Tower 7 - {len(df)} rows:")
+                    st.write(df.head())
+                    logger.info(f"Successfully processed Tower 7 data with {len(df)} rows")
+                    return (df, f"Tower {tower_num}"), (None, None)
                 else:
                     return (df, f"Tower {tower_num}"), (None, None)
 
@@ -2465,7 +2433,7 @@ def GetSlabReport():
             for file in files:
                 try:
                     if file.startswith("Veridia") and "Structure Work Tracker" in file:
-                        # st.write("🕓 Previous month:", file)
+                        # st.write("ðŸ•“ Previous month:", file)
                         response = cos_client.get_object(Bucket="projectreportnew", Key=file)
                         # st.session_state.slabreport = ProcessVeridia(io.BytesIO(response['Body'].read()))
                         if st.session_state.ignore_month and st.session_state.ignore_year:
@@ -2515,7 +2483,7 @@ def generatePrompt(combined_data, slab):
             - External Development: Sewer Line, Storm Line, GSB, WMM, Stamp Concrete, Saucer drain, Kerb Stone
             
             Asite:
-            - MEP Works: Wall Conducting, Slab Conducting, Plumbing Works, Wiring & Switch Socket
+            - MEP Works: Wall Conduting, Slab Conduting, Plumbing Works, Wiring & Switch Socket
             - Interior Finishing Works: Waterproofing - Sunken, Wall Tiling, Floor Tiling, POP & Gypsum Plaster
             - Civil Works: Shuttering, Reinforcement, Concreting, De-shuttering
             - External Development: Sewer Line, Rain Water/Storm Line, Granular Sub-base, WMM, Saucer drain/Paver block, Kerb Stone
@@ -2583,8 +2551,8 @@ def generatePrompt(combined_data, slab):
                     {{
                       "Category": "MEP Works",
                       "Activities": [
-                        {{"Activity Name": "Wall Conducting", "Total": 0}},
-                        {{"Activity Name": "Slab Conducting", "Total": 0}},
+                        {{"Activity Name": "Wall Conduting", "Total": 0}},
+                        {{"Activity Name": "Slab Conduting", "Total": 0}},
                         {{"Activity Name": "Plumbing Works", "Total": 0}},
                         {{"Activity Name": "Wiring & Switch Socket", "Total": 0}}
                       ]
@@ -2835,19 +2803,19 @@ def getTotal(ai_data):
 def display_activity_count():
     try:
         if 'ai_response' not in st.session_state or not st.session_state.ai_response:
-            st.error("❌ No AI-generated data available. Please run the analysis first.")
+            st.error(" No AI-generated data available. Please run the analysis first.")
             return
 
         try:
             ai_data = json.loads(st.session_state.ai_response)
         except json.JSONDecodeError as e:
-            st.error(f"❌ Failed to parse AI response: {str(e)}")
+            st.error(f" Failed to parse AI response: {str(e)}")
             st.write("Raw AI response:")
             st.text(st.session_state.ai_response)
             return
 
         if not isinstance(ai_data, dict) or "COS" not in ai_data or "Asite" not in ai_data:
-            st.error("❌ Invalid AI data format. Expected 'COS' and 'Asite' sections.")
+            st.error(" Invalid AI data format. Expected 'COS' and 'Asite' sections.")
             st.write("AI data content:")
             st.json(ai_data)
             return
@@ -2896,7 +2864,7 @@ def display_activity_count():
             },
             "Asite": {
                 "MEP Works": [
-                    "Wall Conducting", "Slab Conducting", "Plumbing Works", "Wiring & Switch Socket"
+                    "Wall Conduting", "Slab Conduting", "Plumbing Works", "Wiring & Switch Socket"
                     # REMOVED "POP & Gypsum Plaster" from MEP Works
                 ],
                 "Interior Finishing Works": [
@@ -2998,7 +2966,7 @@ def display_activity_count():
 
     except Exception as e:
         logging.error(f"Error in display_activity_count: {str(e)}")
-        st.error(f"❌ Error displaying activity counts: {str(e)}")
+        st.error(f" Error displaying activity counts: {str(e)}")
         st.write("AI response content (for debugging):")
         st.text(st.session_state.ai_response)
 
@@ -3019,7 +2987,7 @@ st.markdown(
 # Show progress if data fetching is in progress
 show_progress()
 
-st.sidebar.title("🔒Asite Initialization")
+st.sidebar.title("Asite Initialization")
 email = st.sidebar.text_input("Email", "impwatson@gadieltechnologies.com", key="email_input")
 password = st.sidebar.text_input("Password", "Srihari@790$", type="password", key="password_input")
 
@@ -3045,19 +3013,37 @@ if st.sidebar.button("Initialize and Fetch Data"):
 # Combined function to handle both analysis and activity count display
 def generate_consolidated_Checklist_excel(ai_data):
     try:
-        # Parse AI data if it's a string
         if isinstance(ai_data, str):
             logger.info("Parsing ai_data from string")
             ai_data = json.loads(ai_data)
         
         if not isinstance(ai_data, dict) or "COS" not in ai_data or "Asite" not in ai_data:
             logger.error("Invalid AI data format: missing 'COS' or 'Asite' keys")
-            st.error("❌ Invalid AI data format for Excel generation.")
+            st.error("Invalid AI data format for Excel generation.")
             return None
 
+        # CRITICAL DEBUG FOR TOWER 7
+        logger.info("=== TOWER 7 EXCEL GENERATION DEBUG ===")
+        cos_towers = [t.get('Tower') for t in ai_data.get('COS', [])]
+        asite_towers = [t.get('Tower') for t in ai_data.get('Asite', [])]
+        logger.info(f"COS towers in AI data: {cos_towers}")
+        logger.info(f"Asite towers in AI data: {asite_towers}")
+        
+        if "Tower 7" in cos_towers:
+            logger.info("Tower 7 found in COS AI data")
+            st.write("Tower 7 found in COS AI data")
+        else:
+            logger.error("Tower 7 NOT found in COS AI data")
+            st.error("Tower 7 NOT found in COS AI data")
+            
+        if "Tower 7" in asite_towers:
+            logger.info("Tower 7 found in Asite AI data")
+            st.write("Tower 7 found in Asite AI data")
+        else:
+            logger.error("Tower 7 NOT found in Asite AI data")
+            st.error("Tower 7 NOT found in Asite AI data")
+
         logger.info(f"AI data keys: {list(ai_data.keys())}")
-        logger.info(f"COS data: {ai_data.get('COS', [])}")
-        logger.info(f"Asite data: {ai_data.get('Asite', [])}")
 
         # Normalize slab_data structure
         if isinstance(ai_data, dict):
@@ -3075,7 +3061,7 @@ def generate_consolidated_Checklist_excel(ai_data):
 
         # Updated COS to Asite activity name mapping
         cos_to_asite_mapping = {
-            "EL-First Fix": "Wall Conducting",
+            "EL-First Fix": "Wall Conduting",
             "Min. count of UP-First Fix and CP-First Fix": "Plumbing Works",  
             "Waterproofing Works": "Waterproofing - Sunken",
             "Gypsum & POP Punning": "POP & Gypsum Plaster",
@@ -3095,19 +3081,16 @@ def generate_consolidated_Checklist_excel(ai_data):
             "De-shuttering": "De-shuttering"
         }
 
-        # Activities that map to "Concreting" and "Slab Conducting" in Asite
         slab_cast_activities = ["Shuttering", "Reinforcement", "Concreting", "De-shuttering"]  
 
-        # Initialize lists to store data
         consolidated_rows = []
 
         # Process Slab data
         slab_data_dict = {}
         for tower_name, total_count in slab_counts.items():
-            if tower_name != "Tower Name" and tower_name != "Total":  # Skip header and total rows
-                original_tower_name = tower_name  # Keep original for debugging
+            if tower_name != "Tower Name" and tower_name != "Total":
+                original_tower_name = tower_name
                 
-                # Normalize tower name but preserve A/B suffixes
                 if "Tower" in tower_name:
                     tower_name = tower_name.replace("Tower ", "T").replace("(", "").replace(")", "")
                 
@@ -3115,7 +3098,6 @@ def generate_consolidated_Checklist_excel(ai_data):
                 
                 count = int(total_count) if pd.notna(total_count) else 0
                 
-                # Special handling for Tower 4 - split slab data between T4A and T4B
                 if tower_name == "T4":
                     half_count = count // 2
                     remainder = count % 2
@@ -3133,12 +3115,24 @@ def generate_consolidated_Checklist_excel(ai_data):
         cos_data_dict = {}
         for tower_data in ai_data.get("COS", []):
             tower_name = tower_data.get("Tower", "Unknown Tower")
-            original_tower_name = tower_name  # Keep original for debugging
+            original_tower_name = tower_name
             
             if "Tower" in tower_name:
                 tower_name = tower_name.replace("Tower ", "T").replace("(", "").replace(")", "")
             
             logger.info(f"Processing COS Tower: {original_tower_name} -> {tower_name}")
+            
+            # Debug for T7
+            if tower_name == "T7":
+                logger.info(f"=== TOWER 7 COS DATA DEBUG ===")
+                logger.info(f"T7 Categories: {[cat.get('Category') for cat in tower_data.get('Categories', [])]}")
+                for category_data in tower_data.get("Categories", []):
+                    category = category_data.get("Category", "Unknown Category")
+                    logger.info(f"T7 Category '{category}' Activities:")
+                    for activity in category_data.get("Activities", []):
+                        activity_name = activity.get("Activity Name", "Unknown Activity")
+                        count = activity.get("Total", 0)
+                        logger.info(f"  - {activity_name}: {count}")
             
             for category_data in tower_data.get("Categories", []):
                 category = category_data.get("Category", "Unknown Category")
@@ -3162,19 +3156,34 @@ def generate_consolidated_Checklist_excel(ai_data):
                     else:
                         key = (tower_name, activity_name, category)
                         cos_data_dict[key] = {"count": count, "open_missing": open_missing}
+                        
+                        if tower_name == "T7" and "EL-First Fix" in activity_name:
+                            logger.info(f"T7 COS stored: {key} -> {cos_data_dict[key]}")
 
-        logger.info(f"COS data dict: {cos_data_dict}")
+        logger.info(f"COS data dict keys for T7: {[key for key in cos_data_dict.keys() if key[0] == 'T7']}")
 
         # Process Asite data
         asite_data_dict = {}
         for tower_data in ai_data.get("Asite", []):
             tower_name = tower_data.get("Tower", "Unknown Tower")
-            original_tower_name = tower_name  # Keep original for debugging
+            original_tower_name = tower_name
             
             if "Tower" in tower_name:
                 tower_name = tower_name.replace("Tower ", "T").replace("(", "").replace(")", "")
             
             logger.info(f"Processing Asite Tower: {original_tower_name} -> {tower_name}")
+            
+            # Debug for T7
+            if tower_name == "T7":
+                logger.info(f"=== TOWER 7 ASITE DATA DEBUG ===")
+                logger.info(f"T7 Categories: {[cat.get('Category') for cat in tower_data.get('Categories', [])]}")
+                for category_data in tower_data.get("Categories", []):
+                    category = category_data.get("Category", "Unknown Category")
+                    logger.info(f"T7 Category '{category}' Activities:")
+                    for activity in category_data.get("Activities", []):
+                        activity_name = activity.get("Activity Name", "Unknown Activity")
+                        count = activity.get("Total", 0)
+                        logger.info(f"  - {activity_name}: {count}")
             
             for category_data in tower_data.get("Categories", []):
                 category = category_data.get("Category", "Unknown Category")
@@ -3198,8 +3207,10 @@ def generate_consolidated_Checklist_excel(ai_data):
                     else:
                         key = (tower_name, activity_name, category)
                         asite_data_dict[key] = {"count": count, "open_missing": open_missing}
+                        if tower_name == "T7" and "Wall Conduting" in activity_name:
+                            logger.info(f"T7 Asite stored: {key} -> {asite_data_dict[key]}")
 
-        logger.info(f"Asite data dict: {asite_data_dict}")
+        logger.info(f"Asite data dict keys for T7: {[key for key in asite_data_dict.keys() if key[0] == 'T7']}")
 
         # Normalize COS data to use Asite activity names
         normalized_cos_data = {}
@@ -3207,14 +3218,14 @@ def generate_consolidated_Checklist_excel(ai_data):
             count = data["count"]
             open_missing = data["open_missing"]
             
-            # IMPORTANT: Prevent Concreting from being categorized as External Development
+            if tower == "T7" and "EL-First Fix" in cos_activity:
+                logger.info(f"T7 Normalizing: {cos_activity} in {category} with count {count}")
+            
             if cos_activity == "Concreting" and category == "External Development":
                 logger.info(f"REDIRECTING: Moving Concreting from External Development to Civil Works for {tower}")
                 category = "Civil Works"
             
-            # Map slab-related activities to both "Concreting" and "Slab Conducting"
             if cos_activity in slab_cast_activities:
-                # Map to Concreting (Civil Works)
                 asite_activity = "Concreting"
                 key = (tower, asite_activity, category)
                 existing_data = normalized_cos_data.get(key, {"count": 0, "open_missing": None})
@@ -3224,31 +3235,27 @@ def generate_consolidated_Checklist_excel(ai_data):
                 }
                 logger.info(f"Mapped {cos_activity} to Concreting for {tower} in {category}")
                 
-                # ALSO map to Slab Conducting (MEP Works) if it's a slab-related activity
                 if cos_activity in ["Shuttering", "Reinforcement", "Concreting"]:
-                    slab_conducting_key = (tower, "Slab Conducting", "MEP Works")
+                    slab_conducting_key = (tower, "Slab Conduting", "MEP Works")
                     existing_slab_data = normalized_cos_data.get(slab_conducting_key, {"count": 0, "open_missing": None})
                     normalized_cos_data[slab_conducting_key] = {
                         "count": existing_slab_data["count"] + count,
                         "open_missing": open_missing if open_missing is not None else existing_slab_data["open_missing"]
                     }
-                    logger.info(f"ALSO mapped {cos_activity} to Slab Conducting for {tower} in MEP Works")
+                    logger.info(f"ALSO mapped {cos_activity} to Slab Conduting for {tower} in MEP Works")
 
-            elif cos_activity == "Slab Conducting":
-                # Map Slab Conducting to both activities
-                # 1. Map to Concreting (Civil Works)
+            elif cos_activity == "Slab Conduting":
                 concreting_key = (tower, "Concreting", "Civil Works")
                 existing_concreting_data = normalized_cos_data.get(concreting_key, {"count": 0, "open_missing": None})
                 normalized_cos_data[concreting_key] = {
                     "count": existing_concreting_data["count"] + count,
                     "open_missing": open_missing if open_missing is not None else existing_concreting_data["open_missing"]
                 }
-                logger.info(f"Mapped Slab Conducting to Concreting for {tower} in Civil Works")
+                logger.info(f"Mapped Slab Conduting to Concreting for {tower} in Civil Works")
                 
-                # 2. Map to Slab Conducting (MEP Works)
-                slab_conducting_key = (tower, "Slab Conducting", "MEP Works")
+                slab_conducting_key = (tower, "Slab Conduting", "MEP Works")
                 normalized_cos_data[slab_conducting_key] = {"count": count, "open_missing": open_missing}
-                logger.info(f"Mapped Slab Conducting to Slab Conducting for {tower} in MEP Works")
+                logger.info(f"Mapped Slab Conduting to Slab Conduting for {tower} in MEP Works")
 
             elif cos_activity in ["UP-First Fix", "CP-First Fix"]:
                 asite_activity = "Plumbing Works"
@@ -3262,20 +3269,20 @@ def generate_consolidated_Checklist_excel(ai_data):
                 asite_activity = cos_to_asite_mapping[cos_activity]
                 key = (tower, asite_activity, category)
                 normalized_cos_data[key] = {"count": count, "open_missing": open_missing}
+                
+                if tower == "T7" and asite_activity == "Wall Conduting":
+                    logger.info(f"T7 Normalized to Wall Conduting: {key} -> {normalized_cos_data[key]}")
             else:
                 logger.warning(f"No Asite mapping found for COS activity: {cos_activity}")
                 key = (tower, cos_activity, category)
                 normalized_cos_data[key] = {"count": count, "open_missing": open_missing}
 
-        logger.info(f"Normalized COS data before slab merge: {normalized_cos_data}")
+        logger.info(f"Normalized COS data keys for T7: {[key for key in normalized_cos_data.keys() if key[0] == 'T7']}")
 
-        # **CRITICAL UPDATE**: Merge slab data with normalized COS data for BOTH "Concreting" AND "Slab Conducting"
-        # This ensures slab_data_dict counts are properly mapped to BOTH activities
-
-        # First, identify all categories that have "Concreting" or "Slab Conducting" activities from Asite data
+        # Merge slab data with normalized COS data
         slab_related_categories = {}
         for (tower, activity, category) in asite_data_dict.keys():
-            if activity in ["Concreting", "Slab Conducting"]:
+            if activity in ["Concreting", "Slab Conduting"]:
                 if tower not in slab_related_categories:
                     slab_related_categories[tower] = []
                 if category not in slab_related_categories[tower]:
@@ -3283,40 +3290,33 @@ def generate_consolidated_Checklist_excel(ai_data):
 
         logger.info(f"Found slab-related categories: {slab_related_categories}")
 
-        # Update/Create BOTH "Concreting" AND "Slab Conducting" entries with slab data for each tower
         for tower_name, slab_count in slab_data_dict.items():
-            # Get categories for this tower, default to common categories if not found
             categories = slab_related_categories.get(tower_name, ["Civil Works", "MEP Works"])
             
             for category in categories:
-                # Update CONCRETING with slab count (in Civil Works)
                 if category == "Civil Works":
                     concreting_key = (tower_name, "Concreting", category)
-                    if concreting_key in asite_data_dict:  # Only update if this activity exists for this tower/category
+                    if concreting_key in asite_data_dict:
                         normalized_cos_data[concreting_key] = {
-                            "count": slab_count,  # This will show in "Completed Work*(Count of Flat)" column
+                            "count": slab_count,
                             "open_missing": normalized_cos_data.get(concreting_key, {}).get("open_missing", None)
                         }
                         logger.info(f"UPDATED: Set Concreting for {tower_name} in {category} with slab count: {slab_count}")
                 
-                # Update SLAB CONDUCTING with slab count (in MEP Works)
                 if category == "MEP Works":
-                    slab_conducting_key = (tower_name, "Slab Conducting", category)
-                    if slab_conducting_key in asite_data_dict:  # Only update if this activity exists for this tower/category
+                    slab_conducting_key = (tower_name, "Slab Conduting", category)
+                    if slab_conducting_key in asite_data_dict:
                         normalized_cos_data[slab_conducting_key] = {
-                            "count": slab_count,  # This will show in "Completed Work*(Count of Flat)" column
+                            "count": slab_count,
                             "open_missing": normalized_cos_data.get(slab_conducting_key, {}).get("open_missing", None)
                         }
-                        logger.info(f"UPDATED: Set Slab Conducting for {tower_name} in {category} with slab count: {slab_count}")
+                        logger.info(f"UPDATED: Set Slab Conduting for {tower_name} in {category} with slab count: {slab_count}")
 
-        # Also ensure any tower in slab_data_dict that doesn't have existing entries gets them
         for tower_name, slab_count in slab_data_dict.items():
-            # Check if this tower has any slab-related entries
             has_concreting = any(key[0] == tower_name and key[1] == "Concreting" and key[2] == "Civil Works" for key in normalized_cos_data.keys())
-            has_slab_conducting = any(key[0] == tower_name and key[1] == "Slab Conducting" and key[2] == "MEP Works" for key in normalized_cos_data.keys())
+            has_slab_conducting = any(key[0] == tower_name and key[1] == "Slab Conduting" and key[2] == "MEP Works" for key in normalized_cos_data.keys())
             
             if not has_concreting:
-                # Create Concreting entry with Civil Works category
                 default_category = "Civil Works"
                 key = (tower_name, "Concreting", default_category)
                 normalized_cos_data[key] = {
@@ -3326,27 +3326,29 @@ def generate_consolidated_Checklist_excel(ai_data):
                 logger.info(f"CREATED: New Concreting entry for {tower_name} in {default_category} with slab count: {slab_count}")
             
             if not has_slab_conducting:
-                # Create Slab Conducting entry with MEP Works category  
-                default_category = "MEP Works"  # Slab Conducting is typically in MEP Works
-                key = (tower_name, "Slab Conducting", default_category)
+                default_category = "MEP Works"
+                key = (tower_name, "Slab Conduting", default_category)
                 normalized_cos_data[key] = {
                     "count": slab_count,
                     "open_missing": None
                 }
-                logger.info(f"CREATED: New Slab Conducting entry for {tower_name} in {default_category} with slab count: {slab_count}")
+                logger.info(f"CREATED: New Slab Conduting entry for {tower_name} in {default_category} with slab count: {slab_count}")
 
-        logger.info(f"After merging slab data, normalized COS data: {normalized_cos_data}")
+        logger.info(f"After merging slab data, normalized COS data keys for T7: {[key for key in normalized_cos_data.keys() if key[0] == 'T7']}")
 
-        # Combine normalized COS (including slab) and Asite data
+        # Combine normalized COS and Asite data
         all_keys = set(normalized_cos_data.keys()).union(set(asite_data_dict.keys()))
+        
+        t7_keys = [key for key in all_keys if key[0] == 'T7']
+        logger.info(f"=== TOWER 7 COMBINED KEYS DEBUG ===")
+        logger.info(f"T7 all_keys: {t7_keys}")
+        
         for key in all_keys:
             tower_name, activity_name, category = key
-            # Skip "No. of Slab cast" to avoid displaying it (since we're now using "Concreting")
+            
             if activity_name == "No. of Slab cast":
                 continue
             
-            # IMPORTANT: Skip "Concreting" if it's categorized as External Development
-            # Concreting should only appear under Civil Works, not External Development
             if activity_name == "Concreting" and category == "External Development":
                 logger.info(f"SKIPPING: Concreting in External Development for {tower_name}")
                 continue
@@ -3356,27 +3358,29 @@ def generate_consolidated_Checklist_excel(ai_data):
             cos_count = cos_data["count"]
             asite_count = asite_data["count"]
             
-            # Special logging for Concreting and Slab Conducting activities to debug
-            if activity_name in ["Concreting", "Slab Conducting"]:
+            if tower_name == "T7" and activity_name == "Wall Conduting":
+                logger.info(f"=== T7 WALL CONDUTING CALCULATION ===")
+                logger.info(f"Key: {key}")
+                logger.info(f"COS data: {cos_data}")
+                logger.info(f"Asite data: {asite_data}")
+                logger.info(f"COS count: {cos_count}, Asite count: {asite_count}")
+            
+            if activity_name in ["Concreting", "Slab Conduting"]:
                 logger.info(f"SLAB DEBUG - Tower: {tower_name}, Activity: {activity_name}, Category: {category}, COS Count: {cos_count}, Asite Count: {asite_count}")
             
-            # MODIFIED: Handle different scenarios for Open/Missing calculation
             if cos_count == 0:
-                # If completed work is 0, set open/missing to 0 (no calculation needed)
                 open_missing_count = 0
                 logger.info(f"No calculation for {tower_name} - {activity_name}: Completed Work is 0, setting Open/Missing to 0")
             elif asite_count > cos_count:
-                # If closed checklist is greater than completed work, set open/missing to 0
                 open_missing_count = 0
                 logger.info(f"Closed checklist ({asite_count}) > Completed work ({cos_count}) for {tower_name} - {activity_name}: setting Open/Missing to 0")
             else:
-                # Normal calculation when completed work >= closed checklist
                 open_missing_override = cos_data["open_missing"] if cos_data["open_missing"] is not None else asite_data["open_missing"]
                 if open_missing_override is not None:
                     open_missing_count = open_missing_override
                     logger.info(f"Using override value {open_missing_override} for {tower_name} - {activity_name}")
                 else:
-                    open_missing_count = cos_count - asite_count  # Use subtraction instead of abs() for proper calculation
+                    open_missing_count = cos_count - asite_count
                     logger.info(f"Calculated Open/Missing: {cos_count} - {asite_count} = {open_missing_count} for {tower_name} - {activity_name}")
             
             in_progress_count = 0
@@ -3385,19 +3389,44 @@ def generate_consolidated_Checklist_excel(ai_data):
                 "Category": category,
                 "Activity Name": activity_name,
                 "Completed Work*(Count of Flat)": cos_count, 
-                "In Progress Work*(Count of Flat)":in_progress_count,
+                "In Progress Work*(Count of Flat)": in_progress_count,
                 "Closed checklist against completed work": asite_count,
                 "Open/Missing check list": open_missing_count
             })
 
-        logger.info(f"Consolidated rows: {consolidated_rows}")
+        logger.info(f"Consolidated rows: {len(consolidated_rows)}")
+
+        # Propagate Concreting count to other Civil Works activities
+        concreting_counts = {}
+        
+        for row in consolidated_rows:
+            if row["Category"] == "Civil Works" and row["Activity Name"] == "Concreting":
+                tower = row["Tower"]
+                concreting_counts[tower] = row["Completed Work*(Count of Flat)"]
+        
+        civil_works_activities = ["Shuttering", "Reinforcement", "De-shuttering"]
+        for row in consolidated_rows:
+            if row["Category"] == "Civil Works" and row["Activity Name"] in civil_works_activities:
+                tower = row["Tower"]
+                if tower in concreting_counts:
+                    concreting_count = concreting_counts[tower]
+                    row["Completed Work*(Count of Flat)"] = concreting_count
+                    
+                    asite_count = row["Closed checklist against completed work"]
+                    if concreting_count == 0:
+                        row["Open/Missing check list"] = 0
+                    elif asite_count > concreting_count:
+                        row["Open/Missing check list"] = 0
+                    else:
+                        row["Open/Missing check list"] = concreting_count - asite_count
+                    
+                    logger.info(f"Propagated Concreting count ({concreting_count}) to {row['Activity Name']} for {tower}")
 
         # Create DataFrame
         df = pd.DataFrame(consolidated_rows)
         if df.empty:
             logger.warning("DataFrame is empty after processing. No data available to generate consolidated checklist.")
             st.warning("No data available to generate consolidated checklist.")
-            # Create a minimal Excel file with a message
             output = BytesIO()
             workbook = Workbook()
             worksheet = workbook.active
@@ -3408,6 +3437,17 @@ def generate_consolidated_Checklist_excel(ai_data):
             return output
 
         logger.info(f"DataFrame created with {len(df)} rows")
+        
+        # DEBUG: Check if T7 is in the final dataframe
+        if "T7" in df['Tower'].values:
+            logger.info("T7 is present in final consolidated DataFrame")
+            st.write("T7 is present in final consolidated DataFrame")
+            t7_rows = df[df['Tower'] == 'T7']
+            logger.info(f"T7 rows in final DataFrame: {len(t7_rows)}")
+            st.write(f"T7 rows in final DataFrame: {len(t7_rows)}")
+        else:
+            logger.error("T7 is MISSING from final consolidated DataFrame!")
+            st.error("T7 is MISSING from final consolidated DataFrame!")
 
         # Sort by Tower, Category, and Activity Name for consistency
         df.sort_values(by=["Tower", "Category", "Activity Name"], inplace=True)
@@ -3416,7 +3456,6 @@ def generate_consolidated_Checklist_excel(ai_data):
         output = BytesIO()
         workbook = Workbook()
 
-        # Remove default sheet created by openpyxl
         if "Sheet" in workbook.sheetnames:
             workbook.remove(workbook["Sheet"])
 
@@ -3492,12 +3531,10 @@ def generate_consolidated_Checklist_excel(ai_data):
 
             current_row += 1
 
-        # Now add External Development as a separate section at the end
+        # Add External Development section
         if not external_data.empty:
-            # Add a separator row
             current_row += 2
             
-            # External Development header
             worksheet1.cell(row=current_row, column=6).value = "External Development Works"
             worksheet1.cell(row=current_row, column=6).font = header_font
             current_row += 1
@@ -3506,7 +3543,6 @@ def generate_consolidated_Checklist_excel(ai_data):
             worksheet1.cell(row=current_row, column=6).font = category_font
             current_row += 1
 
-            # Headers for External Development
             headers = [
                 "ACTIVITY NAME",
                 "Completed Work*(Count of Flat)",
@@ -3522,7 +3558,6 @@ def generate_consolidated_Checklist_excel(ai_data):
                 cell.alignment = center_alignment
             current_row += 1
 
-            # Aggregate External Development data across all towers
             external_aggregated = external_data.groupby('Activity Name').agg({
                 'Completed Work*(Count of Flat)': 'sum',
                 'In Progress Work*(Count of Flat)': 'sum',
@@ -3530,7 +3565,6 @@ def generate_consolidated_Checklist_excel(ai_data):
                 'Open/Missing check list': 'sum'
             }).reset_index()
 
-            # Add External Development activities
             for _, row in external_aggregated.iterrows():
                 worksheet1.cell(row=current_row, column=6).value = row["Activity Name"]
                 worksheet1.cell(row=current_row, column=7).value = row["Completed Work*(Count of Flat)"]
@@ -3543,7 +3577,6 @@ def generate_consolidated_Checklist_excel(ai_data):
                     cell.alignment = center_alignment
                 current_row += 1
 
-            # Total for External Development
             total_external_open_missing = external_aggregated["Open/Missing check list"].sum()
             worksheet1.cell(row=current_row, column=6).value = f"TOTAL pending checklist"
             worksheet1.cell(row=current_row, column=10).value = total_external_open_missing
@@ -3566,16 +3599,14 @@ def generate_consolidated_Checklist_excel(ai_data):
             adjusted_width = (max_length + 2)
             worksheet1.column_dimensions[column].width = adjusted_width
 
-        # Create Sheet 2: Summary Checklist - UPDATED VERSION
+        # Create Sheet 2: Summary Checklist
         worksheet2 = workbook.create_sheet(title="Checklist June")
         current_row = 1
 
-        # Write title
         worksheet2.cell(row=current_row, column=1).value = "Checklist: June"
         worksheet2.cell(row=current_row, column=1).font = header_font
         current_row += 1
 
-        # Write headers - Updated to include new categories
         headers = [
             "Site",
             "Total of Missing & Open Checklist-Civil Works",
@@ -3592,15 +3623,11 @@ def generate_consolidated_Checklist_excel(ai_data):
             cell.alignment = center_alignment
         current_row += 1
 
-        # UPDATED: Category mapping function with new categories
         def map_category_to_type(category):
-            """Map categories to the new category structure"""
-            return category  # Return as-is since we now have explicit category names
+            return category
 
-        # UPDATED: Better aggregation logic that preserves tower structure
         summary_data = {}
         
-        # Debug: Log all unique categories found
         unique_categories = df['Category'].unique()
         logger.info(f"All unique categories found: {unique_categories}")
         
@@ -3609,35 +3636,30 @@ def generate_consolidated_Checklist_excel(ai_data):
             category = row["Category"]
             open_missing = row["Open/Missing check list"]
             
-            # Skip rows with zero open/missing counts if needed
             if open_missing == 0:
                 continue
             
-            # Handle External Development separately - aggregate across all towers
             if category == "External Development":
                 site_name = "External Development-All Sites"
             else:
-                # Handle tower naming more carefully for non-external development
                 if tower.startswith("T"):
-                    tower_num = tower[1:]  # Remove 'T' prefix
+                    tower_num = tower[1:]
                     
-                    # Handle towers with A/B suffix (like T4A, T4B)
                     if tower_num[-1].isalpha():
                         base_num = tower_num[:-1]
                         suffix = tower_num[-1]
                         if len(base_num) == 1:
-                            base_num = f"0{base_num}"  # Pad single digits
+                            base_num = f"0{base_num}"
                         site_name = f"Veridia-Tower {base_num} {suffix}"
                     else:
                         if len(tower_num) == 1:
-                            tower_num = f"0{tower_num}"  # Pad single digits
+                            tower_num = f"0{tower_num}"
                         site_name = f"Veridia-Tower {tower_num}"
                 else:
-                    site_name = f"Veridia-{tower}"  # Fallback for non-standard tower names
+                    site_name = f"Veridia-{tower}"
 
             type_ = map_category_to_type(category)
             
-            # Initialize site data if not exists
             if site_name not in summary_data:
                 summary_data[site_name] = {
                     "Civil Works": 0, 
@@ -3646,23 +3668,19 @@ def generate_consolidated_Checklist_excel(ai_data):
                     "External Development": 0
                 }
             
-            # Add the count to appropriate type
             if type_ in summary_data[site_name]:
                 summary_data[site_name][type_] += open_missing
             
-            # Debug logging for each aggregation
             logger.info(f"Added {open_missing} to {site_name} - {type_} (from category: {category})")
 
         logger.info(f"Final summary data for Sheet 2: {summary_data}")
 
-        # UPDATED: Handle case where no data exists
         if not summary_data:
             logger.warning("No summary data found for Sheet 2")
             worksheet2.cell(row=current_row, column=1).value = "No data available"
             for col in range(2, 7):
                 worksheet2.cell(row=current_row, column=col).value = 0
         else:
-            # Write summary data to Sheet 2
             for site_name, counts in sorted(summary_data.items()):
                 civil_count = counts["Civil Works"]
                 mep_count = counts["MEP Works"]
@@ -3670,7 +3688,6 @@ def generate_consolidated_Checklist_excel(ai_data):
                 external_count = counts["External Development"]
                 total_count = civil_count + mep_count + interior_count + external_count
                 
-                # Only add rows with non-zero totals
                 if total_count > 0:
                     worksheet2.cell(row=current_row, column=1).value = site_name
                     worksheet2.cell(row=current_row, column=2).value = civil_count
@@ -3707,16 +3724,14 @@ def generate_consolidated_Checklist_excel(ai_data):
 
     except Exception as e:
         logger.error(f"Error generating consolidated Excel: {str(e)}", exc_info=True)
-        st.error(f"❌ Error generating Excel file: {str(e)}")
+        st.error(f"Error generating Excel file: {str(e)}")
         return None
-
-
 
 def run_analysis_and_display():
     try:
         # Check if data is available
         if not st.session_state.get('data_fetch_complete', False):
-            st.error("❌ Please run 'Initialize and Fetch Data' first!")
+            st.error(" Please run 'Initialize and Fetch Data' first!")
             return
             
         st.write("Running status analysis...")
@@ -3725,7 +3740,7 @@ def run_analysis_and_display():
 
         st.write("Processing AI data totals...")
         if 'ai_response' not in st.session_state or not st.session_state.ai_response:
-            st.error("❌ No AI data available to process totals. Please ensure analysis ran successfully.")
+            st.error(" No AI data available to process totals. Please ensure analysis ran successfully.")
             return
 
         st.write("Displaying activity counts...")
@@ -3756,7 +3771,7 @@ def run_analysis_and_display():
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
                 st.sidebar.download_button(
-                    label="📥 Download Checklist Excel",
+                    label="ðŸ“¥ Download Checklist Excel",
                     data=excel_file,
                     file_name=file_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3771,7 +3786,7 @@ def run_analysis_and_display():
         st.error(f"Error during analysis, display, or Excel generation: {str(e)}")
         safe_log(f"Error during analysis, display, or Excel generation: {str(e)}", "error")
 
-st.sidebar.title("📊 Status Analysis")
+st.sidebar.title(" Status Analysis")
 
 if st.sidebar.button("Analyze and Display Activity Counts"):
     run_analysis_and_display()
@@ -3987,4 +4002,3 @@ async def initialize_and_fetch_data(email, password):
         update_progress(100, "Initialization completed!")
         st.sidebar.success("All data fetched successfully!")
         return True
-
