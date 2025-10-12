@@ -555,15 +555,14 @@ def process_data(df, activity_df, location_df, dataset_name):
 
     completed['full_path'] = completed['qiLocationId'].apply(get_full_path)
 
-    def has_flat_number(full_path):
-        parts = full_path.split('/')
-        last_part = parts[-1]
-        match = re.match(r'^\d+(?:(?:\s*\(LL\))|(?:\s*\(UL\))|(?:\s*LL)|(?:\s*UL))?$', last_part)
-        return bool(match)
-        
-    completed = completed[completed['full_path'].apply(has_flat_number)]
+    # **NEW: Filter to only include records with "/Pour" in the full path**
+    logger.info(f"Total completed records before /Pour filter: {len(completed)}")
+    completed = completed[completed['full_path'].str.contains('/Pour', case=False, na=False)]
+    logger.info(f"Total completed records after /Pour filter: {len(completed)}")
+    
     if completed.empty:
-        logger.warning(f"No completed activities with flat numbers found in {dataset_name} data after filtering.")
+        logger.warning(f"No completed activities with /Pour in path found in {dataset_name} data after filtering.")
+        st.warning(f"No completed activities with /Pour in path found for {dataset_name}")
         return pd.DataFrame(), 0
 
     def get_tower_name(full_path):
@@ -588,11 +587,43 @@ def process_data(df, activity_df, location_df, dataset_name):
 
     completed['tower_name'] = completed['full_path'].apply(get_tower_name)
 
-    analysis = completed.groupby(['tower_name', 'activityName'])['qiLocationId'].nunique().reset_index(name='CompletedCount')
-    analysis = analysis.sort_values(by=['tower_name', 'activityName'], ascending=True)
+    # **NEW: Extract tower number for better matching**
+    def extract_tower_key(tower_name):
+        """Extract tower key like 'T4', 'T5', 'T6', 'T7' from tower name"""
+        if 'Tower 4' in tower_name or 'T4' in tower_name:
+            return 'T4'
+        elif 'Tower 5' in tower_name or 'T5' in tower_name:
+            return 'T5'
+        elif 'Tower 6' in tower_name or 'T6' in tower_name:
+            return 'T6'
+        elif 'Tower 7' in tower_name or 'T7' in tower_name:
+            return 'T7'
+        else:
+            # Try to extract number from tower name
+            match = re.search(r'Tower\s*(\d+)', tower_name, re.IGNORECASE)
+            if match:
+                return f'T{match.group(1)}'
+            return tower_name
+
+    completed['tower_key'] = completed['tower_name'].apply(extract_tower_key)
+
+    # Group by tower_key and activityName to get counts
+    analysis = completed.groupby(['tower_key', 'activityName'])['qiLocationId'].nunique().reset_index(name='CompletedCount')
+    
+    # Also keep tower_name for display purposes
+    tower_mapping = completed[['tower_key', 'tower_name']].drop_duplicates()
+    analysis = analysis.merge(tower_mapping, on='tower_key', how='left')
+    
+    analysis = analysis.sort_values(by=['tower_key', 'activityName'], ascending=True)
     total_completed = analysis['CompletedCount'].sum()
 
-    logger.info(f"Total completed activities for {dataset_name} after processing: {total_completed}")
+    logger.info(f"Total completed activities for {dataset_name} after processing with /Pour filter: {total_completed}")
+    
+    # Log some sample paths to verify filtering
+    if not completed.empty:
+        sample_paths = completed['full_path'].head(10).tolist()
+        logger.info(f"Sample full paths after /Pour filter: {sample_paths}")
+    
     return analysis, total_completed
 
 # Main analysis function for Eden Structure
@@ -849,6 +880,90 @@ def get_access_token(api_key):
         logger.error(f"Error getting access token: {str(e)}")
         return None
 
+# NEW FUNCTION: Count concreting activities with special logic
+def count_concreting_from_cos(tower_df, tower_name):
+    """
+    Count concreting/casting activities from Structure Work Tracker that have a valid date in column F (Actual Finish).
+    Only activities with the word "casting" in the Task Name and a valid date in Actual Finish are counted.
+    
+    Args:
+        tower_df: DataFrame for the specific tower sheet
+        tower_name: Name of the tower (e.g., "Tower 4")
+    
+    Returns:
+        int: Count of completed concreting activities
+    """
+    try:
+        if tower_df is None or tower_df.empty:
+            logger.warning(f"No data available for {tower_name}")
+            return 0
+        
+        concreting_count = 0
+        
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Starting concreting count for {tower_name}")
+        logger.info(f"{'='*80}")
+        
+        # Iterate through all rows in the tower sheet
+        for idx, row in tower_df.iterrows():
+            task_name = str(row.get('Task Name', '')).strip()
+            task_name_lower = task_name.lower()
+            actual_finish = row.get('Actual Finish')
+            
+            # Check: Does the task name contain the word "casting"?
+            if 'casting' not in task_name_lower:
+                continue  # Skip if it doesn't have "casting" in the name
+            
+            # Check: Does column F (Actual Finish) have a valid date?
+            has_valid_date = False
+            date_str = "No date"
+            
+            if pd.notna(actual_finish):
+                # Check if it's already a datetime object
+                if isinstance(actual_finish, (pd.Timestamp, datetime)):
+                    has_valid_date = True
+                    date_str = actual_finish.strftime('%Y-%m-%d')
+                # Check if it's a string that's not NA
+                elif isinstance(actual_finish, str):
+                    actual_finish_cleaned = actual_finish.strip().upper()
+                    # Exclude common NA values
+                    if actual_finish_cleaned not in ['NA', 'N/A', 'NAT', 'NONE', '', 'NAN']:
+                        # Try to parse it as a date to ensure it's valid
+                        try:
+                            parsed_date = pd.to_datetime(actual_finish)
+                            has_valid_date = True
+                            date_str = parsed_date.strftime('%Y-%m-%d')
+                        except:
+                            has_valid_date = False
+                            logger.warning(f"{tower_name} (row {idx}): Casting activity '{task_name}' has invalid date format: '{actual_finish}'")
+                else:
+                    # Handle numeric dates (Excel serial dates)
+                    try:
+                        converted_date = pd.to_datetime(actual_finish, errors='coerce')
+                        if pd.notna(converted_date):
+                            has_valid_date = True
+                            date_str = converted_date.strftime('%Y-%m-%d')
+                    except:
+                        has_valid_date = False
+            
+            # Log and count if it has "casting" and a valid date
+            if has_valid_date:
+                concreting_count += 1
+                logger.info(f"✓ {tower_name} (row {idx}): COUNTED - '{task_name}' | Actual Finish: {date_str}")
+            else:
+                logger.info(f"✗ {tower_name} (row {idx}): SKIPPED - '{task_name}' | Actual Finish: {actual_finish} (No valid date)")
+        
+        logger.info(f"{'='*80}")
+        logger.info(f"Total concreting count for {tower_name}: {concreting_count}")
+        logger.info(f"{'='*80}\n")
+        return concreting_count
+        
+    except Exception as e:
+        logger.error(f"Error counting concreting for {tower_name}: {str(e)}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return 0
+
 # WatsonX Prompt Generation (Updated with new categories)
 def generatePrompt(json_datas):
     try:
@@ -866,7 +981,7 @@ def generatePrompt(json_datas):
 
             Categories and Activities:
             - Civil Works: Concreting, Shuttering, Reinforcement, De-Shuttering
-            - MEP Works: Plumbing Works, Slab Conduiting, Wall Conduiting, Wiring & Switch Socket
+            - MEP Works: Plumbing Works, Slab conduting, Wall Conduiting, Wiring & Switch Socket
             - Interior Finishing Works: Floor Tiling, POP & Gypsum Plaster, Wall Tiling, Waterproofing – Sunken
             - External Development Activities: Granular Sub-Base, Kerb Stone, Rain Water / Storm Line, Saucer Drain / Paver Block, Sewer Line, Stamp Concrete, Storm Line, WMM
 
@@ -885,7 +1000,7 @@ def generatePrompt(json_datas):
                 "Category": "MEP Works",
                 "Activities": [
                   {{"Activity Name": "Plumbing Works", "Total": 0}},
-                  {{"Activity Name": "Slab Conduiting", "Total": 0}},
+                  {{"Activity Name": "Slab conduting", "Total": 0}},
                   {{"Activity Name": "Wall Conduiting", "Total": 0}},
                   {{"Activity Name": "Wiring & Switch Socket", "Total": 0}}
                 ]
@@ -1011,7 +1126,7 @@ def generate_fallback_totals(count_table):
                 ]},
                 {"Category": "MEP Works", "Activities": [
                     {"Activity Name": "Plumbing Works", "Total": 0},
-                    {"Activity Name": "Slab Conduiting", "Total": 0},
+                    {"Activity Name": "Slab conduting", "Total": 0},
                     {"Activity Name": "Wall Conduiting", "Total": 0},
                     {"Activity Name": "Wiring & Switch Socket", "Total": 0}
                 ]},
@@ -1038,7 +1153,7 @@ def generate_fallback_totals(count_table):
                 "Concreting", "Shuttering", "Reinforcement", "De-Shuttering"
             ],
             "MEP Works": [
-                "Plumbing Works", "Slab Conduiting", "Wall Conduiting", "Wiring & Switch Socket"
+                "Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"
             ],
             "Interior Finishing Works": [
                 "Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"
@@ -1079,7 +1194,7 @@ def generate_fallback_totals(count_table):
             ]},
             {"Category": "MEP Works", "Activities": [
                 {"Activity Name": "Plumbing Works", "Total": 0},
-                {"Activity Name": "Slab Conduiting", "Total": 0},
+                {"Activity Name": "Slab conduting", "Total": 0},
                 {"Activity Name": "Wall Conduiting", "Total": 0},
                 {"Activity Name": "Wiring & Switch Socket", "Total": 0}
             ]},
@@ -1128,15 +1243,15 @@ def getTotal(ai_data):
         st.error(f"Error parsing AI data: {str(e)}")
         return [0] * len(st.session_state.get('sheduledf', pd.DataFrame()).index)
 
-# Function to handle activity count display (Updated with new categories and activities)
+# UPDATED: Function to handle activity count display
 def display_activity_count():
     # Updated specific activities according to new categorization
     specific_activities = [
         "Concreting", "Shuttering", "Reinforcement", "De-Shuttering",  # Civil Works
-        "Slab Conduiting", "Wall Conduiting", "Wiring & Switch Socket",  # MEP Works (Plumbing Works handled separately)
+        "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket",  # MEP Works (changed from "Slab Conduiting")
         "Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken",  # Interior Finishing Works
-        "Granular Sub-Base", "Kerb Stone", "Rain Water / Storm Line", "Saucer Drain / Paver Block",  # External Development Activities
-        "Sewer Line", "Stamp Concrete", "Storm Line", "WMM"  # External Development Activities (continued)
+        "Granular Sub-Base", "Kerb Stone", "Rain Water / Storm Line", "Saucer Drain / Paver Block",
+        "Sewer Line", "Stamp Concrete", "Storm Line", "WMM"  # External Development Activities
     ]
     all_activities = specific_activities + ["UP-First Fix and CP-First Fix"]
 
@@ -1147,7 +1262,7 @@ def display_activity_count():
         "Reinforcement": "Civil Works",
         "De-Shuttering": "Civil Works",
         "UP-First Fix and CP-First Fix": "MEP Works",
-        "Slab Conduiting": "MEP Works",
+        "Slab conduting": "MEP Works",  # Changed from "Slab Conduiting"
         "Wall Conduiting": "MEP Works", 
         "Wiring & Switch Socket": "MEP Works",
         "Floor Tiling": "Interior Finishing Works",
@@ -1165,7 +1280,6 @@ def display_activity_count():
     }
 
     count_tables = {}
-    # Ensure ai_response is a dictionary
     if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
         st.session_state.ai_response = {}
         logger.info("Re-initialized st.session_state.ai_response as empty dictionary")
@@ -1180,21 +1294,16 @@ def display_activity_count():
         st.write(f"Debug - First few rows from {tname}:")
         st.write(tower_data.head(3))
         
-        st.write(f"Debug - Task Name matches in {tname}:")
-        for activity in specific_activities:
-            exact_matches = len(tower_data[tower_data['Task Name'] == activity])
-            st.write(f"{activity}: {exact_matches} exact matches")
-        
-        up_matches = len(tower_data[tower_data['Task Name'] == "UP-First Fix"])
-        cp_matches = len(tower_data[tower_data['Task Name'] == "CP-First Fix"])
-        st.write(f"UP-First Fix: {up_matches} exact matches")
-        st.write(f"CP-First Fix: {cp_matches} exact matches")
+        # **NEW: Special handling for Concreting count**
+        concreting_count_special = count_concreting_from_cos(tower_data, tname)
+        st.write(f"**Special Concreting Count for {tname}: {concreting_count_special}**")
         
         count_table = pd.DataFrame({
             'Count_Unfiltered': [0] * len(all_activities),
             'Count_Filtered': [0] * len(all_activities)
         }, index=all_activities)
         
+        # Filter tower data by Actual Finish date
         tower_data_filtered = tower_data.copy()
         if 'Actual Finish' in tower_data.columns:
             tower_data['Actual_Finish_Original'] = tower_data['Actual Finish'].astype(str)
@@ -1207,7 +1316,15 @@ def display_activity_count():
             tower_data_filtered = tower_data[~has_na_mask].copy()
             tower_data.drop('Actual_Finish_Original', axis=1, inplace=True)
         
+        # For non-concreting activities, use standard counting
         for activity in specific_activities:
+            if activity == "Concreting":
+                # Use the special count for concreting
+                count_table.loc[activity, 'Count_Filtered'] = concreting_count_special
+                count_table.loc[activity, 'Count_Unfiltered'] = concreting_count_special
+                continue
+            
+            # Standard counting for other activities
             exact_matches = tower_data[tower_data['Task Name'] == activity]
             if len(exact_matches) > 0:
                 count_table.loc[activity, 'Count_Unfiltered'] = len(exact_matches)
@@ -1222,6 +1339,7 @@ def display_activity_count():
                 case_insensitive_matches_filtered = tower_data_filtered[tower_data_filtered['Task Name'].str.lower() == activity.lower()]
                 count_table.loc[activity, 'Count_Filtered'] = len(case_insensitive_matches_filtered)
         
+        # Handle UP-First Fix and CP-First Fix combination
         up_first_fix_matches = tower_data[tower_data['Task Name'].str.lower() == "up-first fix".lower()]
         cp_first_fix_matches = tower_data[tower_data['Task Name'].str.lower() == "cp-first fix".lower()]
         up_first_fix_count = len(up_first_fix_matches)
@@ -1491,10 +1609,17 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
         logger.info(f"Activity counts keys: {list(activity_counts.keys()) if activity_counts else 'None'}")
         logger.info(f"Activity counts type: {type(activity_counts)}")
         
+        # Also log structure_analysis to see what we have
+        if structure_analysis is not None and not structure_analysis.empty:
+            logger.info(f"Structure analysis columns: {structure_analysis.columns.tolist()}")
+            logger.info(f"Structure analysis sample:\n{structure_analysis.head()}")
+            logger.info(f"Unique tower_keys in structure_analysis: {structure_analysis['tower_key'].unique().tolist()}")
+            logger.info(f"Unique activityNames in structure_analysis: {structure_analysis['activityName'].unique().tolist()}")
+        
         # Define categories and activities according to new structure
         categories = {
             "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
-            "MEP Works": ["Plumbing Works", "Slab Conduiting", "Wall Conduiting", "Wiring & Switch Socket"],
+            "MEP Works": ["Plumbing Works", "Slab Conduting", "Wall Conduiting", "Wiring & Switch Socket"],
             "Interior Finishing Works": ["Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"]
         }
 
@@ -1504,8 +1629,8 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
             "Shuttering": "Shuttering", 
             "Reinforcement": "Reinforcement",
             "De-Shuttering": "De-Shuttering",
-            "Plumbing Works": "Plumbing Works",  # Will sum UP-First Fix and CP-First Fix
-            "Slab Conduiting": "Slab Conduiting",
+            "Plumbing Works": ["UP-First Fix", "CP-First Fix"],  # Will sum both
+            "Slab Conduting": "Slab conduting",  # lowercase 'c' to match Asite
             "Wall Conduiting": "Wall Conducting",
             "Wiring & Switch Socket": "Wiring & Switch Socket",
             "Floor Tiling": "Floor Tiling",
@@ -1514,18 +1639,101 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
             "Waterproofing – Sunken": "Waterproofing - Sunken"
         }
 
-        # Towers to include
-        towers = ["Tower 4", "Tower 7"]
+        # Activities that should have the same completed count as Concreting
+        activities_same_as_concreting = ["Shuttering", "Reinforcement", "De-Shuttering", "Slab Conduting"]
+
+        # Include all towers dynamically
+        all_towers = ["Tower 4", "Tower 5", "Tower 6", "Tower 7"]
+        
+        logger.info(f"Processing all towers: {all_towers}")
 
         # Initialize list to store consolidated data
         consolidated_rows = []
 
         # Process data for each tower and category
-        for tower in towers:
-            tower_key = tower.replace("Tower ", "T")  # e.g., "Tower 4" -> "T4"
+        for tower in all_towers:
+            tower_key = f"T{tower.replace('Tower ', '')}"  # e.g., "Tower 4" -> "T4"
+            tower_num = tower.replace('Tower ', '')
+            
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Processing {tower} (key: {tower_key})")
+            logger.info(f"{'='*60}")
+            
             for category, activities in categories.items():
                 # Process each activity in the category
                 for activity in activities:
+                    # SPECIAL HANDLING FOR ACTIVITIES THAT MATCH CONCRETING
+                    # Slab Conduting, Shuttering, Reinforcement, De-Shuttering have same completed count as Concreting
+                    if activity in activities_same_as_concreting:
+                        # Get the concreting count from activity_counts (COS data)
+                        completed_flats = 0
+                        tower_name_variations = [tower_key, tower, f"Tower {tower_num}"]
+                        
+                        found_tower = None
+                        for tower_var in tower_name_variations:
+                            if activity_counts and tower_var in activity_counts:
+                                found_tower = tower_var
+                                break
+                        
+                        if found_tower:
+                            ai_data = activity_counts[found_tower]
+                            # Extract the Concreting total from AI response data
+                            if isinstance(ai_data, list):
+                                for category_data in ai_data:
+                                    if isinstance(category_data, dict) and 'Category' in category_data:
+                                        if category_data['Category'] == 'Civil Works':
+                                            for activity_data in category_data['Activities']:
+                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == 'Concreting':
+                                                    completed_flats = activity_data.get('Total', 0)
+                                                    logger.info(f"Found Concreting count for {found_tower}: {completed_flats}, using for {activity}")
+                                                    break
+                        else:
+                            logger.info(f"No COS data found for {tower}, {activity} completed_flats = 0")
+                        
+                        # Get closed checklist from Asite (normal processing)
+                        asite_activity = cos_to_asite_mapping.get(activity, activity)
+                        if isinstance(asite_activity, list):
+                            asite_activities = asite_activity
+                        else:
+                            asite_activities = [asite_activity]
+
+                        closed_checklist = 0
+                        if structure_analysis is not None and not structure_analysis.empty:
+                            for asite_act in asite_activities:
+                                # Try case-insensitive match
+                                matching_rows = structure_analysis[
+                                    (structure_analysis['tower_key'] == tower_key) &
+                                    (structure_analysis['activityName'].str.lower() == asite_act.lower())
+                                ]
+                                
+                                if not matching_rows.empty:
+                                    closed_checklist += matching_rows['CompletedCount'].sum()
+                                    logger.info(f"Found {tower_key} - {asite_act}: {matching_rows['CompletedCount'].sum()} completed")
+                                else:
+                                    logger.info(f"No match found for {tower_key} - {asite_act}")
+
+                        # Calculate Open/Missing
+                        in_progress = 0
+                        if completed_flats == 0 or closed_checklist > completed_flats:
+                            open_missing = 0
+                        else:
+                            open_missing = abs(completed_flats - closed_checklist)
+
+                        display_activity = asite_activities[0] if isinstance(asite_activity, list) else asite_activity
+
+                        consolidated_rows.append({
+                            "Tower": tower,
+                            "Category": category,
+                            "Activity Name": display_activity,
+                            "Completed Work*(Count of Flat)": completed_flats,
+                            "In progress": in_progress,
+                            "Closed checklist": closed_checklist,
+                            "Open/Missing check list": open_missing
+                        })
+                        
+                        continue  # Skip to next activity
+                    
+                    # REGULAR PROCESSING FOR OTHER ACTIVITIES (Concreting, Plumbing Works, etc.)
                     # Map COS activity name to Asite name(s)
                     asite_activity = cos_to_asite_mapping.get(activity, activity)
                     if isinstance(asite_activity, list):
@@ -1533,24 +1741,31 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
                     else:
                         asite_activities = [asite_activity]
 
-                    # Get completed count from structure_analysis (Asite data)
+                    # Get completed count from structure_analysis (Asite data with /Pour filter)
                     closed_checklist = 0
                     if structure_analysis is not None and not structure_analysis.empty:
                         for asite_act in asite_activities:
+                            # Try case-insensitive match
                             matching_rows = structure_analysis[
-                                (structure_analysis['tower_name'] == tower_key) &
-                                (structure_analysis['activityName'] == asite_act)
+                                (structure_analysis['tower_key'] == tower_key) &
+                                (structure_analysis['activityName'].str.lower() == asite_act.lower())
                             ]
-                            closed_checklist += matching_rows['CompletedCount'].sum() if not matching_rows.empty else 0
+                            
+                            if not matching_rows.empty:
+                                closed_checklist += matching_rows['CompletedCount'].sum()
+                                logger.info(f"Found {tower_key} - {asite_act}: {matching_rows['CompletedCount'].sum()} completed")
+                            else:
+                                logger.info(f"No match found for {tower_key} - {asite_act}")
+                    else:
+                        logger.info(f"No Asite data available for {tower_key} - {activity}")
 
                     # Get completed flats count from activity_counts (COS data)
-                    # Note: activity_counts contains AI response data, we need to extract the totals
                     completed_flats = 0
-                    tower_name_variations = [tower_key, f"Tower {tower_key.replace('T', '')}", tower]
+                    tower_name_variations = [tower_key, tower, f"Tower {tower_num}"]
                     
                     found_tower = None
                     for tower_var in tower_name_variations:
-                        if tower_var in activity_counts:
+                        if activity_counts and tower_var in activity_counts:
                             found_tower = tower_var
                             break
                     
@@ -1563,11 +1778,10 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
                                     for activity_data in category_data['Activities']:
                                         if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
                                             completed_flats = activity_data.get('Total', 0)
+                                            logger.info(f"Found COS data for {found_tower} - {activity}: {completed_flats}")
                                             break
-                                        # Special handling for Plumbing Works
-                                        elif activity == "Plumbing Works" and activity_data.get('Activity Name') == "Plumbing Works":
-                                            completed_flats = activity_data.get('Total', 0)
-                                            break
+                    else:
+                        logger.info(f"No COS data found for {tower} - {activity}, completed_flats = 0")
 
                     # Calculate Open/Missing check list per clarified requirements
                     in_progress = 0  # Not calculated in the current code
@@ -1597,6 +1811,12 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
 
         # Sort by Tower and Category for consistency
         df.sort_values(by=["Tower", "Category"], inplace=True)
+        
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Final consolidated data summary:")
+        logger.info(f"Total rows: {len(df)}")
+        logger.info(f"Towers included: {df['Tower'].unique().tolist()}")
+        logger.info(f"{'='*60}\n")
 
         # Create a BytesIO buffer for the Excel file
         output = io.BytesIO()
@@ -1616,14 +1836,14 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
         row_start = 0
 
         # Group by Tower
-        grouped_by_tower = df.groupby('Tower')
+        grouped_by_tower = df.groupby('Tower', sort=False)
 
         for tower, tower_group in grouped_by_tower:
             # Reset column position for each tower
             col_pos = col_start
 
             # Group Categories within this Tower
-            grouped_by_category = tower_group.groupby('Category')
+            grouped_by_category = tower_group.groupby('Category', sort=False)
 
             # Process each Category side by side
             for category, cat_group in grouped_by_category:
@@ -1689,7 +1909,7 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
             else:
                 return "Civil"  # Default to Civil
 
-        # Aggregate open/missing counts by tower and type (Civil/MEP)
+        # Aggregate open/missing counts by tower and type (Civil/MEP) for ALL towers
         summary_data = {}
         for _, row in df.iterrows():
             tower = row["Tower"]
@@ -1711,7 +1931,7 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
 
         logger.info(f"Summary data for Sheet 2: {summary_data}")
 
-        # Write summary data to Sheet 2
+        # Write summary data to Sheet 2 (all towers, even if zero)
         for site_name, counts in sorted(summary_data.items()):
             civil_count = counts["Civil"]
             mep_count = counts["MEP"]
@@ -1813,6 +2033,7 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
         return None
+    
 
 # Combined function to handle analysis and display
 def run_analysis_and_display():
@@ -1892,7 +2113,7 @@ st.markdown(
 )
 
 # Initialize and Fetch Data
-st.sidebar.title("🔑 Asite Initialization")
+st.sidebar.title("🔐 Asite Initialization")
 email = st.sidebar.text_input("Email", "impwatson@gadieltechnologies.com", key="email_input")
 password = st.sidebar.text_input("Password", "Srihari@790$", type="password", key="password_input")
 
