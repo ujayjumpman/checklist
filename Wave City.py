@@ -554,45 +554,69 @@ def process_data(df, activity_df, location_df, dataset_name):
 
     completed['full_path'] = completed['qiLocationId'].apply(get_full_path)
 
-    def has_flat_number(full_path):
-        parts = full_path.split('/')
-        last_part = parts[-1]
-        match = re.match(r'^\d+(?:(?:\s*\(LL\))|(?:\s*\(UL\))|(?:\s*LL)|(?:\s*UL))?$', last_part)
-        return bool(match)
-        
-    completed = completed[completed['full_path'].apply(has_flat_number)]
+    # **MODIFIED: For Wave City Club, don't filter by flat numbers**
+    # Instead, filter by structural elements (Footing, Plinth Beam, Slab, etc.)
+    def has_structural_element(full_path):
+        """Check if path contains structural work elements"""
+        structural_keywords = [
+            'footing', 'plinth beam', 'slab', 'shear wall', 'column', 
+            'beam', 'roof', 'floor', 'staircase', 'lift', 'water tank'
+        ]
+        path_lower = full_path.lower()
+        return any(keyword in path_lower for keyword in structural_keywords)
+    
+    # Log sample paths before filtering
+    logger.info(f"Sample paths before filtering: {completed['full_path'].head(10).tolist()}")
+    
+    # Apply filter - keep rows with structural elements
+    completed = completed[completed['full_path'].apply(has_structural_element)]
+    
     if completed.empty:
-        logger.warning(f"No completed activities with flat numbers found in {dataset_name} data after filtering.")
+        logger.warning(f"No completed activities with structural elements found in {dataset_name} data after filtering.")
+        st.warning(f"No completed activities with structural elements found in {dataset_name} data.")
         return pd.DataFrame(), 0
+    
+    logger.info(f"After filtering by structural elements: {len(completed)} records remain")
+    logger.info(f"Sample paths after filtering: {completed['full_path'].head(10).tolist()}")
 
     def get_tower_name(full_path):
+        """Extract block name from the path"""
         parts = full_path.split('/')
+        
+        # The block should be the second element (after "Wave city club structure")
+        # Examples: "01. Block (B1) Banquet Hall ", "02. Block (B1) Fine Dine"
         if len(parts) < 2:
-            return full_path
+            logger.warning(f"Unexpected path format: {full_path}")
+            return "Unknown"
         
-        tower = parts[1]
-        if tower == "Tower 4" and len(parts) > 2:
-            module = parts[2]
-            module_number = module.replace("Module ", "").strip()
-            try:
-                module_num = int(module_number)
-                if 1 <= module_num <= 4:
-                    return "Tower 4(B)"
-                elif 5 <= module_num <= 8:
-                    return "Tower 4(A)"
-            except ValueError:
-                logger.warning(f"Could not parse module number from {module} in path {full_path}")
+        block_part = parts[1].strip() if len(parts) > 1 else "Unknown"
         
-        return tower
+        # Log for debugging
+        logger.info(f"Extracting tower from path: {full_path} -> block_part: {block_part}")
+        
+        # Return the full block name as it appears in Asite
+        return block_part
 
     completed['tower_name'] = completed['full_path'].apply(get_tower_name)
+    
+    # Log unique tower names found
+    unique_towers = completed['tower_name'].unique()
+    logger.info(f"Unique tower names found in {dataset_name}: {list(unique_towers)}")
+    st.write(f"**Unique tower names found in {dataset_name}:**")
+    st.write(list(unique_towers))
 
-    analysis = completed.groupby(['tower_name', 'activityName'])['qiLocationId'].nunique().reset_index(name='CompletedCount')
+    # **MODIFIED: Count by tower_name and activityName without grouping by location**
+    # Since we're counting structural elements, not flats
+    analysis = completed.groupby(['tower_name', 'activityName']).size().reset_index(name='CompletedCount')
     analysis = analysis.sort_values(by=['tower_name', 'activityName'], ascending=True)
     total_completed = analysis['CompletedCount'].sum()
 
     logger.info(f"Total completed activities for {dataset_name} after processing: {total_completed}")
+    st.write(f"**Activity counts for {dataset_name}:**")
+    st.write(analysis)
+    
     return analysis, total_completed
+
 
 # Main analysis function for Wave City Club Structure
 def AnalyzeStatusManually(email=None, password=None):
@@ -781,30 +805,24 @@ if 'ai_response' not in st.session_state:
 
 # Process Excel files for Wave City Club blocks with updated sheet names and expected_columns
 def process_file(file_stream, filename):
+    """
+    Process COS Excel file and extract activity counts based on Actual Finish dates.
+    Column G = Activity Name (index 6)
+    Column L = Actual Finish Date (index 11)
+    """
     try:
         workbook = openpyxl.load_workbook(file_stream)
         available_sheets = workbook.sheetnames
         st.write(f"Available sheets in {filename}: {', '.join(available_sheets)}")
 
-        # Update target sheets to match the exact names in the Excel file
         target_sheets = [
-            "B1 Banket Hall & Finedine ",  # Include the trailing space
+            "B1 Banket Hall & Finedine ",
             "B5", "B6", "B7", "B9", "B8", 
-            "B2 & B3",  # Update to match the exact format in the Excel file
+            "B2 & B3",
             "B4", "B11", "B10"
         ]
+        
         results = []
-
-        # Update expected columns to match the actual 31 columns in the Excel file
-        expected_columns = [
-            'Block', 'Floor', 'Part', 'Domain', 'Monthly Look Ahead', 'Activity ID', 
-            'Activity Name', 'Duration', 'Baseline Start', 'Baseline Finish', 
-            'Actual Start', 'Actual Finish', '% Complete', 'Start ()', 'Finish ()', 
-            'Actual Start ()', 'Forecast start', 'Forecast End', 'Forecast Today', 
-            'Duration.1', 'Balance work', 'Per day', 'Month plan', 'Week 1', 
-            'Week 2', 'Week 3', 'Week 4', 'Total For the month', 'Till date', 
-            'Average', 'No of days'
-        ]
 
         for sheet_name in target_sheets:
             if sheet_name not in available_sheets:
@@ -814,68 +832,150 @@ def process_file(file_stream, filename):
             file_stream.seek(0)
 
             try:
+                # Read the sheet starting from row 2 (header at row 1)
                 df = pd.read_excel(file_stream, sheet_name=sheet_name, header=1)
-                st.write(f"Raw columns in {sheet_name}: {list(df.columns)}")
-
-                # Trim any leading/trailing spaces in column names (e.g., 'Block ' in B11, B10)
-                df.columns = [col.strip() for col in df.columns]
-
-                if len(df.columns) != len(expected_columns):
-                    st.error(f"Sheet {sheet_name} has {len(df.columns)} columns, but {len(expected_columns)} were expected: {list(df.columns)}")
+                st.write(f"\n📋 Processing sheet: {sheet_name}")
+                
+                # Trim column names
+                df.columns = [col.strip() if isinstance(col, str) else col for col in df.columns]
+                
+                # Get Column G (Activity Name - index 6) and Column L (Actual Finish - index 11)
+                if len(df.columns) >= 12:
+                    # Create a clean dataframe with just what we need
+                    clean_df = pd.DataFrame({
+                        'Activity Name': df.iloc[:, 6],  # Column G
+                        'Actual Finish': df.iloc[:, 11]  # Column L
+                    })
+                    
+                    # Remove rows where Activity Name is empty
+                    clean_df = clean_df.dropna(subset=['Activity Name'])
+                    clean_df = clean_df[clean_df['Activity Name'].astype(str).str.strip() != '']
+                    
+                    # Convert Actual Finish to datetime
+                    clean_df['Actual Finish'] = pd.to_datetime(clean_df['Actual Finish'], errors='coerce')
+                    
+                    # Filter only rows with valid Actual Finish dates
+                    clean_df = clean_df[clean_df['Actual Finish'].notna()]
+                    
+                    st.write(f"✅ Filtered data for {sheet_name}: **{len(clean_df)} rows** with Actual Finish dates")
+                    if len(clean_df) > 0:
+                        st.write("Sample activities:")
+                        st.write(clean_df.head(5))
+                    
+                    results.append((clean_df, sheet_name))
+                else:
+                    st.error(f"❌ Sheet {sheet_name} has insufficient columns: {len(df.columns)}")
                     continue
 
-                df.columns = expected_columns
-
-                # Update target_columns to use 'Activity Name' instead of 'Task Name'
-                target_columns = ["Activity Name", "Actual Start", "Actual Finish"]
-                available_columns = [col for col in target_columns if col in df.columns]
-
-                if len(available_columns) < len(target_columns):
-                    missing_cols = [col for col in target_columns if col not in available_columns]
-                    st.warning(f"Missing columns in sheet {sheet_name}: {', '.join(missing_cols)}")
-                    for col in missing_cols:
-                        df[col] = None
-
-                df_original = df.copy()
-                df = df[target_columns]
-                df = df.dropna(subset=['Activity Name'])  # Update to use 'Activity Name'
-                df['Activity Name'] = df['Activity Name'].astype(str).str.strip()
-
-                if 'Actual Finish' in df.columns:
-                    df['Actual_Finish_Original'] = df['Actual Finish'].astype(str)
-                    df['Actual Finish'] = pd.to_datetime(df['Actual Finish'], errors='coerce')
-                    has_na_mask = (
-                        pd.isna(df['Actual Finish']) |
-                        (df['Actual_Finish_Original'].str.upper() == 'NAT') |
-                        (df['Actual_Finish_Original'].str.lower().isin(['nan', 'na', 'n/a', 'none', '']))
-                    )
-                    st.write(f"Sample of rows with NA or invalid values in Actual Finish for {sheet_name}:")
-                    na_rows = df[has_na_mask][['Activity Name', 'Actual Finish']]  # Update to use 'Activity Name'
-                    if not na_rows.empty:
-                        st.write(na_rows.head(10))
-                    else:
-                        st.write("No NA or invalid values found in Actual Finish")
-                    df.drop('Actual_Finish_Original', axis=1, inplace=True)
-
-                st.write(f"Unique Activity Names in {sheet_name}:")
-                unique_tasks = df[['Activity Name']].drop_duplicates()  # Update to use 'Activity Name'
-                st.write(unique_tasks)
-
-                results.append((df, sheet_name))
-
             except Exception as e:
-                st.error(f"Error processing sheet {sheet_name}: {str(e)}")
+                st.error(f"❌ Error processing sheet {sheet_name}: {str(e)}")
                 continue
 
         if not results:
-            st.error(f"No valid sheets ({', '.join(target_sheets)}) found in file: {filename}")
+            st.error(f"❌ No valid sheets processed from file: {filename}")
             return [(None, None)]
 
         return results
 
     except Exception as e:
-        st.error(f"Error loading Excel file: {str(e)}")
+        st.error(f"❌ Error loading Excel file: {str(e)}")
         return [(None, None)]
+
+def count_activities_by_foundation_concreting(df, sheet_name):
+    """
+    Count activities based on Foundation Concreting logic:
+    1. Find "Foundation Concreting" activities with Actual Finish dates
+    2. Count how many foundation concreting activities are completed
+    3. Apply same count to related activities: Concreting, Shuttering, Reinforcement, De-Shuttering
+    4. Apply Concreting count to Slab conduting as well
+    """
+    if df is None or df.empty:
+        logger.warning(f"No data for {sheet_name}")
+        return {}
+    
+    st.write(f"\n{'='*60}")
+    st.write(f"**🔍 Processing: {sheet_name}**")
+    st.write(f"{'='*60}")
+    
+    # Keywords to identify foundation concreting and related activities
+    foundation_keywords = ['foundation' ,'Foundation']
+    
+    # Target activities to count
+    target_activities = {
+        'Concreting': ['concreting', 'concrete'],
+        'Shuttering': ['shuttering', 'formwork', 'shutter'],
+        'Reinforcement': ['reinforcement', 'rebar', 'steel'],
+        'De-Shuttering': ['de-shuttering', 'deshuttering', 'de shuttering', 'removal']
+    }
+    
+    activity_counts = {
+        'Concreting': 0,
+        'Shuttering': 0,
+        'Reinforcement': 0,
+        'De-Shuttering': 0,
+        'Slab conduting': 0  # Added Slab conduting
+    }
+    
+    # Step 1: Find Foundation Concreting activities
+    foundation_concreting_count = 0
+    foundation_activities_found = []
+    
+    for idx, row in df.iterrows():
+        activity_name = str(row['Activity Name']).lower().strip()
+        
+        # Check if it's a foundation-related concreting activity
+        is_foundation = any(keyword in activity_name for keyword in foundation_keywords)
+        is_concreting = any(keyword in activity_name for keyword in ['concreting', 'concrete'])
+        
+        if is_foundation and is_concreting:
+            foundation_concreting_count += 1
+            foundation_activities_found.append(row['Activity Name'])
+    
+    if foundation_activities_found:
+        st.write(f"✅ **Found {foundation_concreting_count} Foundation Concreting activities:**")
+        for act in foundation_activities_found:
+            st.write(f"   • {act}")
+    
+    # Step 2: If foundation concreting found, apply count to all related activities
+    if foundation_concreting_count > 0:
+        for activity in target_activities.keys():
+            activity_counts[activity] = foundation_concreting_count
+        
+        # IMPORTANT: Set Slab conduting equal to Concreting
+        activity_counts['Slab conduting'] = foundation_concreting_count
+        
+        st.write(f"\n📊 **Applied count {foundation_concreting_count} to all Civil Works activities**")
+        st.write(f"   • Slab conduting set to match Concreting: {foundation_concreting_count}")
+    else:
+        # If no foundation concreting found, count each activity individually
+        st.write(f"\n⚠️ **No Foundation Concreting found. Counting activities individually...**")
+        
+        for activity_key, keywords in target_activities.items():
+            count = 0
+            found_activities = []
+            for idx, row in df.iterrows():
+                activity_name = str(row['Activity Name']).lower().strip()
+                if any(keyword in activity_name for keyword in keywords):
+                    count += 1
+                    found_activities.append(row['Activity Name'])
+            
+            activity_counts[activity_key] = count
+            if found_activities:
+                st.write(f"   {activity_key}: {count} activities found")
+        
+        # IMPORTANT: Set Slab conduting equal to Concreting count
+        activity_counts['Slab conduting'] = activity_counts['Concreting']
+        st.write(f"   • Slab conduting set to match Concreting: {activity_counts['Concreting']}")
+    
+    # Step 3: Display final counts
+    st.write(f"\n**📈 Final Activity Counts for {sheet_name}:**")
+    for activity, count in activity_counts.items():
+        st.write(f"   • {activity}: **{count}**")
+    
+    st.write(f"{'='*60}\n")
+    return activity_counts
+
+
 
 
 # Function to get access token for WatsonX API
@@ -914,7 +1014,7 @@ def generatePrompt(json_datas):
 
             Categories and Activities:
             - Civil Works: Concreting, Shuttering, Reinforcement, De-Shuttering
-            - MEP Works: Plumbing Works, Slab Conduiting, Wall Conduiting, Wiring & Switch Socket
+            - MEP Works: Plumbing Works, Slab conduting, Wall Conduiting, Wiring & Switch Socket
             - Interior Finishing Works: Floor Tiling, POP & Gypsum Plaster, Wall Tiling, Waterproofing – Sunken
             - External Development Activities: Granular Sub-Base, Kerb Stone, Rain Water / Storm Line, Saucer Drain / Paver Block, Sewer Line, Stamp Concrete, Storm Line, WMM
 
@@ -933,7 +1033,7 @@ def generatePrompt(json_datas):
                 "Category": "MEP Works",
                 "Activities": [
                   {{"Activity Name": "Plumbing Works", "Total": 0}},
-                  {{"Activity Name": "Slab Conduiting", "Total": 0}},
+                  {{"Activity Name": "Slab conduting", "Total": 0}},
                   {{"Activity Name": "Wall Conduiting", "Total": 0}},
                   {{"Activity Name": "Wiring & Switch Socket", "Total": 0}}
                 ]
@@ -1059,7 +1159,7 @@ def generate_fallback_totals(count_table):
                 ]},
                 {"Category": "MEP Works", "Activities": [
                     {"Activity Name": "Plumbing Works", "Total": 0},
-                    {"Activity Name": "Slab Conduiting", "Total": 0},
+                    {"Activity Name": "Slab conduting", "Total": 0},
                     {"Activity Name": "Wall Conduiting", "Total": 0},
                     {"Activity Name": "Wiring & Switch Socket", "Total": 0}
                 ]},
@@ -1086,7 +1186,7 @@ def generate_fallback_totals(count_table):
                 "Concreting", "Shuttering", "Reinforcement", "De-Shuttering"
             ],
             "MEP Works": [
-                "Plumbing Works", "Slab Conduiting", "Wall Conduiting", "Wiring & Switch Socket"
+                "Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"
             ],
             "Interior Finishing Works": [
                 "Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"
@@ -1127,7 +1227,7 @@ def generate_fallback_totals(count_table):
             ]},
             {"Category": "MEP Works", "Activities": [
                 {"Activity Name": "Plumbing Works", "Total": 0},
-                {"Activity Name": "Slab Conduiting", "Total": 0},
+                {"Activity Name": "Slab conduting", "Total": 0},
                 {"Activity Name": "Wall Conduiting", "Total": 0},
                 {"Activity Name": "Wiring & Switch Socket", "Total": 0}
             ]},
@@ -1179,235 +1279,174 @@ def getTotal(ai_data):
 
 # Function to handle activity count display
 def display_activity_count():
-    # Updated specific activities according to new categorization
-    specific_activities = [
-        "Concreting", "Shuttering", "Reinforcement", "De-Shuttering",  # Civil Works
-        "Slab Conduiting", "Wall Conduiting", "Wiring & Switch Socket",  # MEP Works (Plumbing Works handled separately)
-        "Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken",  # Interior Finishing Works
-        "Granular Sub-Base", "Kerb Stone", "Rain Water / Storm Line", "Saucer Drain / Paver Block",  # External Development Activities
-        "Sewer Line", "Stamp Concrete", "Storm Line", "WMM"  # External Development Activities (continued)
-    ]
-    all_activities = specific_activities + ["UP-First Fix and CP-First Fix"]
-
-    # Updated category mapping
-    category_mapping = {
-        "Concreting": "Civil Works",
-        "Shuttering": "Civil Works", 
-        "Reinforcement": "Civil Works",
-        "De-Shuttering": "Civil Works",
-        "UP-First Fix and CP-First Fix": "MEP Works",
-        "Slab Conduiting": "MEP Works",
-        "Wall Conduiting": "MEP Works", 
-        "Wiring & Switch Socket": "MEP Works",
-        "Floor Tiling": "Interior Finishing Works",
-        "POP & Gypsum Plaster": "Interior Finishing Works",
-        "Wall Tiling": "Interior Finishing Works",
-        "Waterproofing – Sunken": "Interior Finishing Works",
-        "Granular Sub-Base": "External Development Activities",
-        "Kerb Stone": "External Development Activities",
-        "Rain Water / Storm Line": "External Development Activities",
-        "Saucer Drain / Paver Block": "External Development Activities",
-        "Sewer Line": "External Development Activities",
-        "Stamp Concrete": "External Development Activities",
-        "Storm Line": "External Development Activities",
-        "WMM": "External Development Activities"
-    }
-
-    count_tables = {}
-    if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
-        st.session_state.ai_response = {}
-        logger.info("Re-initialized st.session_state.ai_response as empty dictionary")
-
-    def process_block_data(block_data, tname):
-        if block_data is None or block_data.empty:
-            logger.warning(f"No data available for {tname}")
-            return tname, None
-
-        block_data = block_data.copy()
+    """
+    Updated version that uses COS tracker data (Column G and L) to count activities.
+    Uses Foundation Concreting as the base count for related Civil Works activities.
+    """
+    if 'file_key' not in st.session_state or not st.session_state.file_key:
+        st.error("❌ No COS file found. Please fetch COS data first.")
+        return
+    
+    try:
+        # Initialize COS client
+        cos_client = initialize_cos_client()
+        if not cos_client:
+            st.error("❌ Failed to initialize COS client")
+            return
         
-        st.write(f"Debug - First few rows from {tname}:")
-        st.write(block_data.head(3))
+        # Fetch the file
+        file_key = st.session_state.file_key
+        st.write(f"📂 Fetching file: **{file_key}**")
         
-        st.write(f"Debug - Activity Name matches in {tname}:")
-        for activity in specific_activities:
-            exact_matches = len(block_data[block_data['Activity Name'] == activity])
-            st.write(f"{activity}: {exact_matches} exact matches")
+        response = cos_client.get_object(Bucket=COS_BUCKET, Key=file_key)
+        file_bytes = io.BytesIO(response['Body'].read())
         
-        up_matches = len(block_data[block_data['Activity Name'] == "UP-First Fix"])
-        cp_matches = len(block_data[block_data['Activity Name'] == "CP-First Fix"])
-        st.write(f"UP-First Fix: {up_matches} exact matches")
-        st.write(f"CP-First Fix: {cp_matches} exact matches")
+        # Process the file with new logic
+        st.write("🔄 Processing COS file with new activity counting logic...")
+        results = process_file(file_bytes, file_key)
         
-        count_table = pd.DataFrame({
-            'Count_Unfiltered': [0] * len(all_activities),
-            'Count_Filtered': [0] * len(all_activities)
-        }, index=all_activities)
+        # Activity categories
+        categories = {
+            "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
+            "MEP Works": ["Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"],
+            "Interior Finishing Works": ["Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"]
+        }
         
-        block_data_filtered = block_data.copy()
-        if 'Actual Finish' in block_data.columns:
-            block_data['Actual_Finish_Original'] = block_data['Actual Finish'].astype(str)
-            block_data['Actual Finish'] = pd.to_datetime(block_data['Actual Finish'], errors='coerce')
-            has_na_mask = (
-                pd.isna(block_data['Actual Finish']) | 
-                (block_data['Actual_Finish_Original'].str.upper() == 'NAT') |
-                (block_data['Actual_Finish_Original'].str.lower().isin(['nan', 'na', 'n/a', 'none', '']))
-            )
-            block_data_filtered = block_data[~has_na_mask].copy()
-            block_data.drop('Actual_Finish_Original', axis=1, inplace=True)
+        # Initialize ai_response dictionary
+        if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
+            st.session_state.ai_response = {}
+            logger.info("Initialized ai_response in display_activity_count")
         
-        for activity in specific_activities:
-            exact_matches = block_data[block_data['Activity Name'] == activity]
-            if len(exact_matches) > 0:
-                count_table.loc[activity, 'Count_Unfiltered'] = len(exact_matches)
-            else:
-                case_insensitive_matches = block_data[block_data['Activity Name'].str.lower() == activity.lower()]
-                count_table.loc[activity, 'Count_Unfiltered'] = len(case_insensitive_matches)
+        # Process each block
+        all_activity_counts = {}
+        
+        for df, sheet_name in results:
+            if df is not None and not df.empty:
+                # Get activity counts for this sheet using foundation concreting logic
+                activity_counts = count_activities_by_foundation_concreting(df, sheet_name)
+                
+                # Store with clean block name
+                clean_name = sheet_name.strip()
+                if clean_name == "B1 Banket Hall & Finedine ":
+                    clean_name = "B1 Banket Hall & Finedine"
+                
+                all_activity_counts[clean_name] = activity_counts
+        
+        if not all_activity_counts:
+            st.error("❌ No activity counts found from COS tracker")
+            return
+        
+        # Display results
+        st.write("## 📊 Activity Counts by Block (Based on Actual Finish Dates)")
+        
+        # Process each block and create AI response structure
+        for block_name, activity_counts in sorted(all_activity_counts.items()):
+            st.write(f"### 🏢 {block_name}")
             
-            exact_matches_filtered = block_data_filtered[block_data_filtered['Activity Name'] == activity]
-            if len(exact_matches_filtered) > 0:
-                count_table.loc[activity, 'Count_Filtered'] = len(exact_matches_filtered)
-            else:
-                case_insensitive_matches_filtered = block_data_filtered[block_data_filtered['Activity Name'].str.lower() == activity.lower()]
-                count_table.loc[activity, 'Count_Filtered'] = len(case_insensitive_matches_filtered)
-        
-        up_first_fix_matches = block_data[block_data['Activity Name'].str.lower() == "up-first fix".lower()]
-        cp_first_fix_matches = block_data[block_data['Activity Name'].str.lower() == "cp-first fix".lower()]
-        up_first_fix_count = len(up_first_fix_matches)
-        cp_first_fix_count = len(cp_first_fix_matches)
-        count_table.loc["UP-First Fix and CP-First Fix", "Count_Unfiltered"] = up_first_fix_count + cp_first_fix_count
-        
-        up_first_fix_matches_filtered = block_data_filtered[block_data_filtered['Activity Name'].str.lower() == "up-first fix".lower()]
-        cp_first_fix_matches_filtered = block_data_filtered[block_data_filtered['Activity Name'].str.lower() == "cp-first fix".lower()]
-        up_first_fix_count_filtered = len(up_first_fix_matches_filtered)
-        cp_first_fix_count_filtered = len(cp_first_fix_matches_filtered)
-        count_table.loc["UP-First Fix and CP-First Fix", "Count_Filtered"] = up_first_fix_count_filtered + cp_first_fix_count_filtered
-        
-        count_table['Count_Unfiltered'] = count_table['Count_Unfiltered'].astype(int)
-        count_table['Count_Filtered'] = count_table['Count_Filtered'].astype(int)
-        
-        return tname, count_table
-
-    # Process each block's data
-    for block, tname_key in [
-        (st.session_state.cos_df_B1, 'cos_tname_B1'),
-        (st.session_state.cos_df_B5, 'cos_tname_B5'),
-        (st.session_state.cos_df_B6, 'cos_tname_B6'),
-        (st.session_state.cos_df_B7, 'cos_tname_B7'),
-        (st.session_state.cos_df_B9, 'cos_tname_B9'),
-        (st.session_state.cos_df_B8, 'cos_tname_B8'),
-        (st.session_state.cos_df_B2_B3, 'cos_tname_B2_B3'),
-        (st.session_state.cos_df_B4, 'cos_tname_B4'),
-        (st.session_state.cos_df_B11, 'cos_tname_B11'),
-        (st.session_state.cos_df_B10, 'cos_tname_B10')
-    ]:
-        if block is not None:
-            tname = st.session_state.get(tname_key)
-            tname, count_table = process_block_data(block, tname)
-            if count_table is not None:
-                count_tables[tname] = count_table
-
-    if not count_tables:
-        st.error("No processed COS data available. Please click 'Fetch COS' first.")
-        st.stop()
-
-    for tname, count_table in count_tables.items():
-        with st.spinner(f"Processing activity counts for {tname}..."):
-            try:
-                st.write(f"Activity Count for {tname} (Unfiltered vs Filtered):")
-                st.write(count_table)
+            # Create AI response structure for this block
+            ai_data = []
+            
+            for category, activities in categories.items():
+                category_data = {
+                    "Category": category,
+                    "Activities": []
+                }
                 
-                count_table_filtered = count_table[['Count_Filtered']].rename(columns={'Count_Filtered': 'Count'})
-                ai_response = generatePrompt(count_table_filtered)
+                for activity in activities:
+                    # Get count from COS data if available
+                    count = activity_counts.get(activity, 0)
+                    
+                    # IMPORTANT: If this is "Slab conduting", use Concreting's count
+                    if activity == "Slab conduting":
+                        count = activity_counts.get("Concreting", 0)
+                    
+                    category_data["Activities"].append({
+                        "Activity Name": activity,
+                        "Total": int(count)
+                    })
                 
-                try:
-                    ai_data = json.loads(ai_response)
-                    if not all(isinstance(item, dict) and 'Category' in item and 'Activities' in item for item in ai_data):
-                        logger.warning(f"Invalid AI data structure for {tname}: {ai_data}")
-                        ai_response = generate_fallback_totals(count_table_filtered)
-                        ai_data = json.loads(ai_response)
+                ai_data.append(category_data)
+            
+            # Store in session state
+            st.session_state.ai_response[block_name] = ai_data
+            logger.info(f"Stored ai_response for {block_name}: {ai_data}")
+            
+            # Display as table
+            display_data = []
+            for category_data in ai_data:
+                category = category_data["Category"]
+                for activity in category_data["Activities"]:
+                    display_data.append({
+                        "Category": category,
+                        "Activity Name": activity["Activity Name"],
+                        "Count": activity["Total"]
+                    })
+            
+            display_df = pd.DataFrame(display_data)
+            
+            # Show by category
+            for category in ["Civil Works", "MEP Works", "Interior Finishing Works"]:
+                category_df = display_df[display_df["Category"] == category]
+                if not category_df.empty:
+                    st.write(f"**{category}**")
+                    st.table(category_df[["Activity Name", "Count"]])
+        
+        # Create consolidated summary
+        st.write("### 📈 Consolidated Activity Summary Across All Blocks")
+        
+        category_mapping = {
+            "Concreting": "Civil Works",
+            "Shuttering": "Civil Works", 
+            "Reinforcement": "Civil Works",
+            "De-Shuttering": "Civil Works",
+            "Plumbing Works": "MEP Works",
+            "Slab conduting": "MEP Works",
+            "Wall Conduiting": "MEP Works", 
+            "Wiring & Switch Socket": "MEP Works",
+            "Floor Tiling": "Interior Finishing Works",
+            "POP & Gypsum Plaster": "Interior Finishing Works",
+            "Wall Tiling": "Interior Finishing Works",
+            "Waterproofing – Sunken": "Interior Finishing Works"
+        }
+        
+        consolidated_summary = {}
+        for block_name, ai_data in st.session_state.ai_response.items():
+            for category_data in ai_data:
+                for activity in category_data["Activities"]:
+                    activity_name = activity["Activity Name"]
+                    count = activity["Total"]
                     
-                    st.session_state.ai_response[tname] = ai_data
-                    logger.info(f"Stored AI response for {tname}: {ai_data}")
-                    
-                    totals_mapping = {}
-                    for category_data in ai_data:
-                        for activity in category_data['Activities']:
-                            totals_mapping[activity['Activity Name']] = activity['Total']
-                    
-                    display_df = count_table.reset_index()
-                    display_df.rename(columns={'index': 'Activity Name'}, inplace=True)
-                    
-                    display_df['Total'] = display_df['Activity Name'].map(
-                        lambda x: totals_mapping.get(x, display_df.loc[display_df['Activity Name'] == x, 'Count_Filtered'].iloc[0])
-                    )
-                    
-                    display_df['Category'] = display_df['Activity Name'].map(lambda x: category_mapping.get(x, "Other"))
-                    
-                    display_df = display_df.sort_values(['Category', 'Activity Name'])
-                    
-                    st.write(f"Activity Count with Totals for {tname}:")
-                    st.write(display_df[['Activity Name', 'Count_Unfiltered', 'Total', 'Category']])
-                    
-                    st.write(f"Activity Counts by Category for {tname}:")
-                    # Updated category display order
-                    for category in ['Civil Works', 'MEP Works', 'Interior Finishing Works', 'External Development Activities']:
-                        category_df = display_df[display_df['Category'] == category]
-                        if not category_df.empty:
-                            st.write(f"**{category}**")
-                            st.write(category_df[['Activity Name', 'Count_Filtered', 'Total']])
-                    
-                except Exception as e:
-                    logger.error(f"Error processing WatsonX for {tname}: {str(e)}")
-                    st.warning(f"Failed to process AI-generated totals for {tname}. Using fallback method.")
-                    
-                    ai_response = generate_fallback_totals(count_table_filtered)
-                    ai_data = json.loads(ai_response)
-                    st.session_state.ai_response[tname] = ai_data
-                    logger.info(f"Stored fallback AI response for {tname}: {ai_data}")
-                    
-                    display_df = count_table.reset_index()
-                    display_df.rename(columns={'index': 'Activity Name'}, inplace=True)
-                    display_df['Category'] = display_df['Activity Name'].map(lambda x: category_mapping.get(x, "Other"))
-                    display_df['Total'] = display_df['Count_Filtered']
-                    display_df = display_df.sort_values(['Category', 'Activity Name'])
-                    
-                    st.write(f"Activity Counts by Category for {tname} (using raw counts):")
-                    # Updated category display order
-                    for category in ['Civil Works', 'MEP Works', 'Interior Finishing Works', 'External Development Activities']:
-                        category_df = display_df[display_df['Category'] == category]
-                        if not category_df.empty:
-                            st.write(f"**{category}**")
-                            st.write(category_df[['Activity Name', 'Count_Filtered', 'Total']])
-                
-            except Exception as e:
-                logger.error(f"Error displaying activity count for {tname}: {str(e)}")
-                st.error(f"Error displaying activity count for {tname}: {str(e)}")
-                count_table_filtered = count_table[['Count_Filtered']].rename(columns={'Count_Filtered': 'Count'})
-                ai_response = generate_fallback_totals(count_table_filtered)
-                ai_data = json.loads(ai_response)
-                st.session_state.ai_response[tname] = ai_data
-                logger.info(f"Stored fallback AI response for {tname} on error: {ai_data}")
+                    if activity_name not in consolidated_summary:
+                        consolidated_summary[activity_name] = 0
+                    consolidated_summary[activity_name] += count
+        
+        # Display consolidated
+        consolidated_data = []
+        for activity_name, total_count in sorted(consolidated_summary.items()):
+            category = category_mapping.get(activity_name, "Other")
+            consolidated_data.append({
+                "Category": category,
+                "Activity Name": activity_name,
+                "Total Count": total_count
+            })
+        
+        consolidated_df = pd.DataFrame(consolidated_data)
+        
+        for category in ["Civil Works", "MEP Works", "Interior Finishing Works"]:
+            category_df = consolidated_df[consolidated_df["Category"] == category]
+            if not category_df.empty:
+                st.write(f"**{category}**")
+                st.table(category_df[["Activity Name", "Total Count"]])
+        
+        st.success("✅ Activity counts updated successfully from COS tracker!")
+        
+    except Exception as e:
+        st.error(f"❌ Error fetching COS data: {str(e)}")
+        logger.error(f"Error fetching COS data: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
-    # Create consolidated External Development Activities table
-    st.write("### External Development Activities (Consolidated)")
-    external_dev_activities = [
-        "Granular Sub-Base", "Kerb Stone", "Rain Water / Storm Line", "Saucer Drain / Paver Block",
-        "Sewer Line", "Stamp Concrete", "Storm Line", "WMM"
-    ]
-    
-    external_dev_data = []
-    for activity in external_dev_activities:
-        total_count = 0
-        for tname, count_table in count_tables.items():
-            if activity in count_table.index:
-                total_count += count_table.loc[activity, 'Count_Filtered']
-        external_dev_data.append({
-            "Activity Name": activity,
-            "Total Count": total_count
-        })
-    
-    external_dev_df = pd.DataFrame(external_dev_data)
-    st.write(external_dev_df)
+
 
 # Combined function for Initialize and Fetch Data
 async def initialize_and_fetch_data(email, password):
@@ -1582,10 +1621,17 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                 logger.error("activity_counts is empty in generate_consolidated_Checklist_excel")
                 return None
 
+        # **IMPORTANT: First, let's log the unique tower names from structure_analysis**
+        if structure_analysis is not None and not structure_analysis.empty and 'tower_name' in structure_analysis.columns:
+            unique_towers = structure_analysis['tower_name'].unique()
+            logger.info(f"Unique tower names in structure_analysis: {list(unique_towers)}")
+            st.write("**Debug: Unique tower names in Asite data:**")
+            st.write(list(unique_towers))
+
         # Define categories and activities according to new structure
         categories = {
             "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
-            "MEP Works": ["Plumbing Works", "Slab Conduiting", "Wall Conduiting", "Wiring & Switch Socket"],
+            "MEP Works": ["Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"],
             "Interior Finishing Works": ["Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"]
         }
 
@@ -1596,13 +1642,33 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             "Reinforcement": "Reinforcement",
             "De-Shuttering": "De-Shuttering",
             "Plumbing Works": "Plumbing Works",  # Will sum UP-First Fix and CP-First Fix
-            "Slab Conduiting": "Slab Conduiting",
+            "Slab conduting": "Slab conduting",
             "Wall Conduiting": "Wall Conducting",
             "Wiring & Switch Socket": "Wiring & Switch Socket",
             "Floor Tiling": "Floor Tiling",
             "POP & Gypsum Plaster": "POP & Gypsum Plaster",
             "Wall Tiling": "Wall Tile",
             "Waterproofing – Sunken": "Waterproofing - Sunken"
+        }
+
+        # **UPDATED: Define block name mapping with EXACT Asite tower names (with trailing spaces and full descriptions)**
+        block_to_asite_filter = {
+            "B1 Banket Hall & Finedine": [
+                "01. Block (B1) Banquet Hall ",  # Note the space at end and "Banquet" spelling
+                "02. Block (B1) Fine Dine"
+            ],
+            "B2 & B3": [
+                "03. Block 02 (B2) Changing room ",
+                "04. Block 03 (B3) GYM "
+            ],
+            "B4": "04. Block 4 (B4) ",
+            "B5": "05. Block 05 (B5) Admin +Member Lounge +Creche+AV Room+Surveillance Room +Toilets ",
+            "B6": "06. Block 06 (B6) Toilets ",
+            "B7": "07. Block 07 (B7) Indoor Sports ",
+            "B8": "08. Block 08 (B8) Squash Court ",
+            "B9": "09. Block 09 (B9) Spa and Saloon",
+            "B10": "10. Block 09 (B10) Spa and Saloon",
+            "B11": "11. Block 11 (B11) "
         }
 
         # Define blocks
@@ -1626,18 +1692,42 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                     else:
                         asite_activities = [asite_activity]
 
-                    # Get completed count from structure_analysis (Asite data)
+                    # **MODIFIED: Get completed count from structure_analysis with correct block filter**
                     closed_checklist = 0
                     if structure_analysis is not None and not structure_analysis.empty:
-                        for asite_act in asite_activities:
-                            matching_rows = structure_analysis[
-                                (structure_analysis['tower_name'] == block) &
-                                (structure_analysis['activityName'] == asite_act)
-                            ]
-                            closed_checklist += matching_rows['CompletedCount'].sum() if not matching_rows.empty else 0
+                        # Get the Asite filter(s) for this block
+                        asite_filters = block_to_asite_filter.get(block, block)
+                        
+                        # Handle both single filter and multiple filters
+                        if isinstance(asite_filters, list):
+                            # Multiple filters (e.g., B1 or B2 & B3)
+                            for asite_filter in asite_filters:
+                                for asite_act in asite_activities:
+                                    matching_rows = structure_analysis[
+                                        (structure_analysis['tower_name'].str.strip() == asite_filter.strip()) &
+                                        (structure_analysis['activityName'] == asite_act)
+                                    ]
+                                    if not matching_rows.empty:
+                                        count = matching_rows['CompletedCount'].sum()
+                                        closed_checklist += count
+                                        logger.info(f"Block {block} (Asite: '{asite_filter}'), Activity: {asite_act}, Count: {count}")
+                                    else:
+                                        logger.info(f"No match for Block {block} (Asite: '{asite_filter}'), Activity: {asite_act}")
+                        else:
+                            # Single filter
+                            for asite_act in asite_activities:
+                                matching_rows = structure_analysis[
+                                    (structure_analysis['tower_name'].str.strip() == asite_filters.strip()) &
+                                    (structure_analysis['activityName'] == asite_act)
+                                ]
+                                if not matching_rows.empty:
+                                    count = matching_rows['CompletedCount'].sum()
+                                    closed_checklist += count
+                                    logger.info(f"Block {block} (Asite: '{asite_filters}'), Activity: {asite_act}, Count: {count}")
+                                else:
+                                    logger.info(f"No match for Block {block} (Asite: '{asite_filters}'), Activity: {asite_act}")
 
                     # Get completed flats count from activity_counts (COS data)
-                    # Note: activity_counts contains AI response data, we need to extract the totals
                     completed_flats = 0
                     block_name_variations = [block_key, block]
                     
@@ -1681,7 +1771,6 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                         "Closed checklist": closed_checklist,
                         "Open/Missing check list": open_missing
                     })
-
         # Create DataFrame
         df = pd.DataFrame(consolidated_rows)
         if df.empty:
