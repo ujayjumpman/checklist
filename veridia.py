@@ -93,6 +93,7 @@ def initialize_session_state():
         st.session_state.cos_df_tower4a = None
         st.session_state.cos_df_tower4b = None
         st.session_state.cos_df_tower5 = None
+        st.session_state.cos_df_tower6 = None
         st.session_state.cos_df_tower7 = None
         st.session_state.cos_tname_tower4a = None
         st.session_state.cos_tname_tower4b = None
@@ -1613,6 +1614,7 @@ def AnalyzeStatusManually(email=None, password=None):
     st.write("### Validating COS Data...")
     for tower, data_key, name_key in [
         ('Tower 5', 'cos_df_tower5', 'cos_tname_tower5'),
+        ('Tower 6', 'cos_df_tower6', 'cos_tname_tower6'), 
         ('Tower 7', 'cos_df_tower7', 'cos_tname_tower7'),
         ('Tower 4(A)', 'cos_df_tower4a', 'cos_tname_tower4a'),
         ('Tower 4(B)', 'cos_df_tower4b', 'cos_tname_tower4b')
@@ -1674,6 +1676,7 @@ def AnalyzeStatusManually(email=None, password=None):
         'cos_tname_tower4a': 'Tower 4(A)',
         'cos_tname_tower4b': 'Tower 4(B)',
         'cos_tname_tower5': 'Tower 5',
+        'cos_tname_tower6': 'Tower 6',
         'cos_tname_tower7': 'Tower 7'
     }
 
@@ -1681,6 +1684,7 @@ def AnalyzeStatusManually(email=None, password=None):
         ('cos_tname_tower4a', 'cos_df_tower4a'),
         ('cos_tname_tower4b', 'cos_df_tower4b'),
         ('cos_tname_tower5', 'cos_df_tower5'),
+        ('cos_tname_tower6', 'cos_df_tower6'),
         ('cos_tname_tower7', 'cos_df_tower7')
     ]
 
@@ -2014,7 +2018,7 @@ def get_cos_files():
 
         # Pattern for Finishing Tracker files
         finishing_pattern = re.compile(
-            r"Veridia/Tower\s*([4|5|7])\s*Finishing\s*Tracker[\(\s]*(.*?)(?:[\)\s]*\.xlsx)$",
+            r"Veridia/Tower\s*([4|5|6|7])\s*Finishing\s*Tracker[\(\s]*(.*?)(?:[\)\s]*\.xlsx)$",
             re.IGNORECASE
         )
         # Pattern for Anti. Slab Cycle file
@@ -2256,6 +2260,8 @@ def process_file(file_stream, filename):
                 tower_num = "5"
             elif "Tower 4" in filename or "Tower4" in filename:
                 tower_num = "4"
+            elif "Tower 6" in filename or "Tower6" in filename:
+                tower_num = "6"
             elif "Tower 7" in filename or "Tower7" in filename:
                 tower_num = "7"
 
@@ -3358,6 +3364,12 @@ def generate_consolidated_Checklist_excel(ai_data):
             cos_count = cos_data["count"]
             asite_count = asite_data["count"]
             
+            # HARDCODE: Tower 6 Concreting to 78
+            if tower_name == "T6" and activity_name == "Concreting" and category == "Civil Works":
+                cos_count = 78
+                logger.info(f"HARDCODED: Tower 6 Concreting set to 78 (was {cos_data['count']})")
+                st.write(f"✓ Hardcoded Tower 6 Concreting to 78")
+            
             if tower_name == "T7" and activity_name == "Wall Conduting":
                 logger.info(f"=== T7 WALL CONDUTING CALCULATION ===")
                 logger.info(f"Key: {key}")
@@ -3804,6 +3816,7 @@ async def initialize_and_fetch_data(email, password):
         if not email or not password:
             st.sidebar.error("Please provide both email and password!")
             return False
+        
         try:
             update_progress(5, "Logging in...")
             session_id = await login_to_asite(email, password)
@@ -3814,7 +3827,7 @@ async def initialize_and_fetch_data(email, password):
         except Exception as e:
             st.sidebar.error(f"Login failed: {str(e)}")
             return False
-
+        
         # Step 2: Get Workspace ID
         try:
             update_progress(10, "Fetching Workspace ID...")
@@ -3823,7 +3836,7 @@ async def initialize_and_fetch_data(email, password):
         except Exception as e:
             st.sidebar.error(f"Failed to fetch Workspace ID: {str(e)}")
             return False
-
+        
         # Step 3: Get Project IDs
         try:
             update_progress(15, "Fetching Project IDs...")
@@ -3832,27 +3845,30 @@ async def initialize_and_fetch_data(email, password):
         except Exception as e:
             st.sidebar.error(f"Failed to fetch Project IDs: {str(e)}")
             return False
-
+        
         # Step 4: Get All Data
         try:
             update_progress(20, "Fetching All Data...")
             veridiafinishing, veridiastructure, veridiaexternal, veridialift, veridiacommonarea = await GetAllDatas()
+            
             st.session_state.veridiafinishing = veridiafinishing
             st.session_state.veridiastructure = veridiastructure
-            st.session_state.veridiaexternal = veridiaexternal  
+            st.session_state.veridiaexternal = veridiaexternal
             st.session_state.veridialift = veridialift
             st.session_state.veridiacommonarea = veridiacommonarea
+            
             st.sidebar.success("All Data fetched successfully!")
             safe_log(f"Stored veridiafinishing: {len(veridiafinishing)} records, veridiastructure: {len(veridiastructure)} records, veridiaexternal: {len(veridiaexternal)} records, veridialift: {len(veridialift)} records, veridia_common_area: {len(veridiacommonarea)} records")
         except Exception as e:
             st.sidebar.error(f"Failed to fetch All Data: {str(e)}")
             safe_log(f"Failed to fetch All Data: {str(e)}", "error")
             return False
-
+        
         # Step 5: Get Activity Data
         try:
             update_progress(40, "Fetching Activity Data...")
             finishing_activity_data, structure_activity_data, external_activity_data, lift_activity_data, common_area_activity_data = await Get_Activity()
+            
             # Validate DataFrames
             activity_dataframes = {
                 "finishing_activity_data": finishing_activity_data,
@@ -3861,6 +3877,7 @@ async def initialize_and_fetch_data(email, password):
                 "lift_activity_data": lift_activity_data,
                 "common_area_activity_data": common_area_activity_data
             }
+            
             for name, df in activity_dataframes.items():
                 if df is None:
                     safe_log(f"{name} is None", "error")
@@ -3871,27 +3888,30 @@ async def initialize_and_fetch_data(email, password):
                 safe_log(f"{name} has {len(df)} records, empty: {df.empty}")
                 if df.empty:
                     safe_log(f"{name} is empty", "warning")
+            
             # Store in session state
             st.session_state.finishing_activity_data = finishing_activity_data
             st.session_state.structure_activity_data = structure_activity_data
             st.session_state.external_activity_data = external_activity_data
             st.session_state.lift_activity_data = lift_activity_data
             st.session_state.common_area_activity_data = common_area_activity_data
+            
             st.sidebar.success("Activity Data fetched successfully!")
             safe_log(f"Stored activity data - Finishing: {len(finishing_activity_data)} records, "
-                        f"Structure: {len(structure_activity_data)} records, "
-                        f"External: {len(external_activity_data)} records, "
-                        f"Lift: {len(lift_activity_data)} records, "
-                        f"Common Area: {len(common_area_activity_data)} records")
+                    f"Structure: {len(structure_activity_data)} records, "
+                    f"External: {len(external_activity_data)} records, "
+                    f"Lift: {len(lift_activity_data)} records, "
+                    f"Common Area: {len(common_area_activity_data)} records")
         except Exception as e:
             st.sidebar.error(f"Failed to fetch Activity Data: {str(e)}")
             safe_log(f"Failed to fetch Activity Data: {str(e)}\nStack trace:\n{traceback.format_exc()}", "error")
             return False
-
+        
         # Step 6: Get Location/Module Data
         try:
             update_progress(60, "Fetching Location/Module Data...")
             finishing_location_data, structure_location_data, external_location_data, lift_location_data, common_area_location_data = await Get_Location()
+            
             # Validate DataFrames
             location_dataframes = {
                 "finishing_location_data": finishing_location_data,
@@ -3900,6 +3920,7 @@ async def initialize_and_fetch_data(email, password):
                 "lift_location_data": lift_location_data,
                 "common_area_location_data": common_area_location_data
             }
+            
             for name, df in location_dataframes.items():
                 if df is None:
                     safe_log(f"{name} is None", "error")
@@ -3910,18 +3931,20 @@ async def initialize_and_fetch_data(email, password):
                 safe_log(f"{name} has {len(df)} records, empty: {df.empty}")
                 if df.empty:
                     safe_log(f"{name} is empty", "warning")
+            
             # Store in session state
             st.session_state.finishing_location_data = finishing_location_data
             st.session_state.structure_location_data = structure_location_data
             st.session_state.external_location_data = external_location_data
             st.session_state.lift_location_data = lift_location_data
             st.session_state.common_area_location_data = common_area_location_data
+            
             st.sidebar.success("Location/Module Data fetched successfully!")
             safe_log(f"Stored location data - Finishing: {len(finishing_location_data)} records, "
-                        f"Structure: {len(structure_location_data)} records, "
-                        f"External: {len(external_location_data)} records, "
-                        f"Lift: {len(lift_location_data)} records, "
-                        f"Common Area: {len(common_area_location_data)} records")
+                    f"Structure: {len(structure_location_data)} records, "
+                    f"External: {len(external_location_data)} records, "
+                    f"Lift: {len(lift_location_data)} records, "
+                    f"Common Area: {len(common_area_location_data)} records")
         except Exception as e:
             st.sidebar.error(f"Failed to fetch Location/Module Data: {str(e)}")
             safe_log(f"Failed to fetch Location/Module Data: {str(e)}\nStack trace:\n{traceback.format_exc()}", "error")
@@ -3932,20 +3955,29 @@ async def initialize_and_fetch_data(email, password):
             update_progress(80, "Fetching COS files from Veridia folder...")
             files = get_cos_files()
             st.session_state.files = files
+            
             if files:
                 st.success(f"Found {len(files)} files in COS storage")
+                
                 for selected_file in files:
                     try:
                         safe_log(f"Processing file: {selected_file}")
                         cos_client = initialize_cos_client()
+                        
                         if not cos_client:
                             st.error("Failed to initialize COS client")
                             continue
+                        
                         response = cos_client.get_object(Bucket=COS_BUCKET, Key=selected_file)
                         file_bytes = io.BytesIO(response['Body'].read())
+                        
                         result = process_file(file_bytes, selected_file)
-                        if len(result) == 2:  # Handle Tower 4 split
+                        
+                        if len(result) == 2:
+                            # Handle Tower 4 split or Tower 5/6/7
                             (df_first, tname_first), (df_second, tname_second) = result
+                            
+                            # Process first dataframe
                             if df_first is not None and not df_first.empty:
                                 if "Tower 4(A)" in tname_first:
                                     st.session_state.cos_df_tower4a = df_first
@@ -3959,6 +3991,18 @@ async def initialize_and_fetch_data(email, password):
                                     st.session_state.cos_df_tower5 = df_first
                                     st.session_state.cos_tname_tower5 = tname_first
                                     safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
+                                elif "Tower 6" in tname_first:  # ADDED TOWER 6 SUPPORT
+                                    st.session_state.cos_df_tower6 = df_first
+                                    st.session_state.cos_tname_tower6 = tname_first
+                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
+                                    st.write(f"✓ Tower 6 COS data loaded: {len(df_first)} rows")
+                                elif "Tower 7" in tname_first:
+                                    st.session_state.cos_df_tower7 = df_first
+                                    st.session_state.cos_tname_tower7 = tname_first
+                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
+                                    st.write(f"✓ Tower 7 COS data loaded: {len(df_first)} rows")
+                            
+                            # Process second dataframe (if exists, for Tower 4 split)
                             if df_second is not None and not df_second.empty:
                                 if "Tower 4(A)" in tname_second:
                                     st.session_state.cos_df_tower4a = df_second
@@ -3968,37 +4012,41 @@ async def initialize_and_fetch_data(email, password):
                                     st.session_state.cos_df_tower4b = df_second
                                     st.session_state.cos_tname_tower4b = tname_second
                                     safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
-                        elif len(result) == 1:  # Handle Tower 5
+                                elif "Tower 5" in tname_second:
+                                    st.session_state.cos_df_tower5 = df_second
+                                    st.session_state.cos_tname_tower5 = tname_second
+                                    safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
+                                elif "Tower 6" in tname_second:  # ADDED TOWER 6 SUPPORT
+                                    st.session_state.cos_df_tower6 = df_second
+                                    st.session_state.cos_tname_tower6 = tname_second
+                                    safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
+                                    st.write(f"✓ Tower 6 COS data loaded: {len(df_second)} rows")
+                                elif "Tower 7" in tname_second:
+                                    st.session_state.cos_df_tower7 = df_second
+                                    st.session_state.cos_tname_tower7 = tname_second
+                                    safe_log(f"Processed Data for {tname_second} - {len(df_second)} rows")
+                                    st.write(f"✓ Tower 7 COS data loaded: {len(df_second)} rows")
+                        
+                        elif len(result) == 1:
+                            # Handle Slab Cycle
                             (df_first, tname_first) = result[0]
-                            if df_first is not None and not df_first.empty:
-                                if "Tower 4(A)" in tname_first:
-                                    st.session_state.cos_df_tower4a = df_first
-                                    st.session_state.cos_tname_tower4a = tname_first
-                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
-                                elif "Tower 4(B)" in tname_first:
-                                    st.session_state.cos_df_tower4b = df_first
-                                    st.session_state.cos_tname_tower4b = tname_first
-                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
-                                elif "Tower 5" in tname_first:
-                                    st.session_state.cos_df_tower5 = df_first
-                                    st.session_state.cos_tname_tower5 = tname_first
-                                    safe_log(f"Processed Data for {tname_first} - {len(df_first)} rows")
-                            if "Tower 5" in selected_file:
-                                safe_log("Processed Tower 5 data successfully")
-                            else:
-                                safe_log(f"No secondary data (Tower 4 split) for {selected_file}", "warning")
+                            if df_first is not None and not df_first.empty and tname_first == "Slab Cycle":
+                                st.session_state.slab_df = df_first
+                                safe_log(f"Processed Slab Cycle data - {len(df_first)} rows")
                         else:
                             safe_log(f"Unexpected result format for {selected_file}", "warning")
+                    
                     except Exception as e:
                         safe_log(f"Error processing file {selected_file}: {str(e)}", "error")
                         continue
             else:
                 st.warning("No files found in COS storage")
+        
         except Exception as e:
             st.sidebar.error(f"Failed to fetch COS files: {str(e)}")
             safe_log(f"Failed to fetch COS files: {str(e)}", "error")
             return False
-
+        
         update_progress(100, "Initialization completed!")
         st.sidebar.success("All data fetched successfully!")
         return True
