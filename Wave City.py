@@ -24,6 +24,22 @@ from ibm_botocore.client import Config
 from tenacity import retry, stop_after_attempt, wait_exponential
 import xlsxwriter
 
+
+STRUCTURAL_STAGES = {
+    "Footing": ["footing"],
+    "Plinth Beam": ["plinth beam", "plinth"],
+    "Shear Wall and Column": ["ground floor shear wall", "ground floor column", "shear wall", "column"],
+    "1st Floor Slab": ["1st floor slab", "first floor slab"],
+    "1st Floor Shear Wall and Column": ["1st floor shear wall", "1st floor column"],
+    "2nd Floor Roof Slab": ["2nd floor", "roof slab", "second floor"],
+    "Terrace Work": ["terrace", "roof"]
+}
+
+STAGE_EXCLUSIONS = {
+    "Shear Wall and Column": ["1st floor", "first floor", "2nd floor", "second floor", "terrace"],
+    "1st Floor Slab": ["2nd floor", "second floor", "terrace", "roof slab"],
+}
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -491,10 +507,24 @@ def format_chunk_locally(chunk, chunk_idx, chunk_size, dataset_name, location_df
     output += f"Total Completed Activities: {total_activities}"
     return output
 
-def process_data(df, activity_df, location_df, dataset_name):
+def process_data(df, activity_df, location_df, dataset_name, stage_name=None):
+    """
+    Modified process_data function that optionally filters by structural stage
+    
+    Args:
+        df: The structure data (with statusName, qiLocationId, activitySeq)
+        activity_df: Activity data (with activityName, activitySeq)
+        location_df: Location data (with qiLocationId, name, qiParentId)
+        dataset_name: Name of the dataset (e.g., "Structure")
+        stage_name: Optional - Name of the structural stage (e.g., "Footing", "Plinth Beam")
+    
+    Returns:
+        Tuple of (analysis DataFrame, total count)
+    """
     completed = df[df['statusName'] == 'Completed']
     if completed.empty:
-        logger.warning(f"No completed activities found in {dataset_name} data.")
+        logger.warning(f"No completed activities found in {dataset_name} data" + 
+                      (f" for stage {stage_name}." if stage_name else "."))
         return pd.DataFrame(), 0
 
     completed = completed.merge(location_df[['qiLocationId', 'name']], on='qiLocationId', how='left')
@@ -554,8 +584,51 @@ def process_data(df, activity_df, location_df, dataset_name):
 
     completed['full_path'] = completed['qiLocationId'].apply(get_full_path)
 
-    # **MODIFIED: For Wave City Club, don't filter by flat numbers**
-    # Instead, filter by structural elements (Footing, Plinth Beam, Slab, etc.)
+    # ============================================================================
+    # CRITICAL: STAGE FILTERING - Apply stage filter based on full_path if stage_name is provided
+    # ============================================================================
+    if stage_name:
+        def matches_stage(full_path, stage):
+            """Check if path contains stage keywords and doesn't contain exclusion keywords"""
+            if pd.isna(full_path):
+                return False
+            path_lower = str(full_path).lower()
+            
+            # Get inclusion keywords
+            keywords = STRUCTURAL_STAGES.get(stage, [])
+            if not keywords:
+                return False
+            
+            # Check if path contains any inclusion keyword
+            has_inclusion = any(keyword in path_lower for keyword in keywords)
+            if not has_inclusion:
+                return False
+            
+            # Check for exclusions
+            exclusions = STAGE_EXCLUSIONS.get(stage, [])
+            if exclusions:
+                # If path contains any exclusion keyword, reject it
+                has_exclusion = any(exclusion in path_lower for exclusion in exclusions)
+                if has_exclusion:
+                    return False
+            
+            return True
+        
+        # Filter by stage BEFORE further processing
+        logger.info(f"Before stage filter ({stage_name}): {len(completed)} records")
+        completed = completed[completed['full_path'].apply(lambda x: matches_stage(x, stage_name))]
+        logger.info(f"After stage filter ({stage_name}): {len(completed)} records")
+        
+        if completed.empty:
+            logger.warning(f"No completed activities found for stage {stage_name} in {dataset_name} data after stage filtering.")
+            st.warning(f"No completed activities found for stage {stage_name} in {dataset_name} data.")
+            return pd.DataFrame(), 0
+        
+        # Log sample paths after filtering
+        logger.info(f"Sample paths after stage filtering for {stage_name}: {completed['full_path'].head(10).tolist()}")
+    # ============================================================================
+
+    # Filter by structural elements
     def has_structural_element(full_path):
         """Check if path contains structural work elements"""
         structural_keywords = [
@@ -565,54 +638,51 @@ def process_data(df, activity_df, location_df, dataset_name):
         path_lower = full_path.lower()
         return any(keyword in path_lower for keyword in structural_keywords)
     
-    # Log sample paths before filtering
-    logger.info(f"Sample paths before filtering: {completed['full_path'].head(10).tolist()}")
-    
-    # Apply filter - keep rows with structural elements
+    logger.info(f"Sample paths before structural filtering: {completed['full_path'].head(10).tolist()}")
     completed = completed[completed['full_path'].apply(has_structural_element)]
     
     if completed.empty:
-        logger.warning(f"No completed activities with structural elements found in {dataset_name} data after filtering.")
-        st.warning(f"No completed activities with structural elements found in {dataset_name} data.")
+        logger.warning(f"No completed activities with structural elements found in {dataset_name} data" + 
+                      (f" for stage {stage_name}" if stage_name else "") + " after filtering.")
+        st.warning(f"No completed activities with structural elements found" + 
+                  (f" for stage {stage_name}" if stage_name else "") + f" in {dataset_name} data.")
         return pd.DataFrame(), 0
     
-    logger.info(f"After filtering by structural elements: {len(completed)} records remain")
+    logger.info(f"After structural element filtering" + 
+               (f" for {stage_name}" if stage_name else "") + f": {len(completed)} records remain")
     logger.info(f"Sample paths after filtering: {completed['full_path'].head(10).tolist()}")
 
     def get_tower_name(full_path):
         """Extract block name from the path"""
         parts = full_path.split('/')
         
-        # The block should be the second element (after "Wave city club structure")
-        # Examples: "01. Block (B1) Banquet Hall ", "02. Block (B1) Fine Dine"
         if len(parts) < 2:
             logger.warning(f"Unexpected path format: {full_path}")
             return "Unknown"
         
         block_part = parts[1].strip() if len(parts) > 1 else "Unknown"
-        
-        # Log for debugging
         logger.info(f"Extracting tower from path: {full_path} -> block_part: {block_part}")
         
-        # Return the full block name as it appears in Asite
         return block_part
 
     completed['tower_name'] = completed['full_path'].apply(get_tower_name)
     
-    # Log unique tower names found
     unique_towers = completed['tower_name'].unique()
-    logger.info(f"Unique tower names found in {dataset_name}: {list(unique_towers)}")
-    st.write(f"**Unique tower names found in {dataset_name}:**")
+    logger.info(f"Unique tower names found in {dataset_name}" + 
+               (f" for stage {stage_name}" if stage_name else "") + f": {list(unique_towers)}")
+    st.write(f"**Unique tower names found in {dataset_name}" + 
+            (f" for stage {stage_name}" if stage_name else "") + ":**")
     st.write(list(unique_towers))
 
-    # **MODIFIED: Count by tower_name and activityName without grouping by location**
-    # Since we're counting structural elements, not flats
+    # Count by tower_name and activityName
     analysis = completed.groupby(['tower_name', 'activityName']).size().reset_index(name='CompletedCount')
     analysis = analysis.sort_values(by=['tower_name', 'activityName'], ascending=True)
     total_completed = analysis['CompletedCount'].sum()
 
-    logger.info(f"Total completed activities for {dataset_name} after processing: {total_completed}")
-    st.write(f"**Activity counts for {dataset_name}:**")
+    logger.info(f"Total completed activities for {dataset_name}" + 
+               (f" stage {stage_name}" if stage_name else "") + f" after processing: {total_completed}")
+    st.write(f"**Activity counts for {dataset_name}" + 
+            (f" - {stage_name}" if stage_name else "") + ":**")
     st.write(analysis)
     
     return analysis, total_completed
@@ -620,6 +690,9 @@ def process_data(df, activity_df, location_df, dataset_name):
 
 # Main analysis function for Wave City Club Structure
 def AnalyzeStatusManually(email=None, password=None):
+    """
+    Modified analysis function that processes data for each structural stage separately
+    """
     start_time = time.time()
 
     if 'sessionid' not in st.session_state:
@@ -644,6 +717,7 @@ def AnalyzeStatusManually(email=None, password=None):
     structure_activity = st.session_state.structure_activity_data
     structure_locations = st.session_state.structure_location_data
     
+    # Validate required columns
     for df, name in [(structure_data, "Structure")]:
         if 'statusName' not in df.columns:
             st.error(f"❌ statusName column not found in {name} data!")
@@ -665,23 +739,47 @@ def AnalyzeStatusManually(email=None, password=None):
             st.error(f"❌ activitySeq or activityName column not found in {name} data!")
             return
 
-    # Process the structure data
-    structure_analysis, structure_total = process_data(structure_data, structure_activity, structure_locations, "Structure")
+    # Initialize storage for stage-wise analysis
+    st.session_state.stage_analysis = {}
+    st.session_state.stage_totals = {}
 
-    # Store the structure analysis in session state
-    st.session_state.structure_analysis = structure_analysis
-    st.session_state.structure_total = structure_total
+    # Process each stage separately
+    st.write("### Processing Data by Structural Stages:")
+    
+    for stage_name in STRUCTURAL_STAGES.keys():
+        st.write(f"\n#### Processing Stage: {stage_name}")
+        st.write("="*80)
+        
+        # Process the structure data for this specific stage
+        stage_analysis, stage_total = process_data(
+            structure_data, 
+            structure_activity, 
+            structure_locations, 
+            "Structure", 
+            stage_name  # Pass stage_name to enable stage filtering
+        )
+        
+        # Store the results
+        st.session_state.stage_analysis[stage_name] = stage_analysis
+        st.session_state.stage_totals[stage_name] = stage_total
+        
+        st.write(f"**Stage {stage_name} - Full Output:**")
+        if not stage_analysis.empty:
+            stage_output = process_manually(stage_analysis, stage_total, f"Structure-{stage_name}")
+            if stage_output:
+                st.text(stage_output)
+        else:
+            st.warning(f"No data found for stage: {stage_name}")
+        
+        st.write("="*80)
 
-    st.write("### Wave City Club Structure Quality Analysis (Completed Activities):")
-    st.write("**Full Output (Structure):**")
-    structure_output = process_manually(structure_analysis, structure_total, "Structure")
-    if structure_output:
-        st.text(structure_output)
-    else:
-        st.warning("No structure output generated.")
+    # Store the original analysis for backward compatibility (use Footing as default)
+    st.session_state.structure_analysis = st.session_state.stage_analysis.get('Footing', pd.DataFrame())
+    st.session_state.structure_total = st.session_state.stage_totals.get('Footing', 0)
 
     end_time = time.time()
-    st.write(f"Total execution time: {end_time - start_time:.2f} seconds")
+    st.write(f"\n### Total execution time: {end_time - start_time:.2f} seconds")
+    st.success("✅ Stage-wise analysis completed successfully!")
 
 def get_cos_files():
     try:
@@ -975,6 +1073,176 @@ def count_activities_by_foundation_concreting(df, sheet_name):
     st.write(f"{'='*60}\n")
     return activity_counts
 
+
+
+# Function to handle activity count display
+def display_activity_count():
+    """
+    Updated version that uses COS tracker data (Column G and L) to count activities.
+    Uses Foundation Concreting as the base count for related Civil Works activities.
+    """
+    if 'file_key' not in st.session_state or not st.session_state.file_key:
+        st.error("❌ No COS file found. Please fetch COS data first.")
+        return
+    
+    try:
+        # Initialize COS client
+        cos_client = initialize_cos_client()
+        if not cos_client:
+            st.error("❌ Failed to initialize COS client")
+            return
+        
+        # Fetch the file
+        file_key = st.session_state.file_key
+        st.write(f"📂 Fetching file: **{file_key}**")
+        
+        response = cos_client.get_object(Bucket=COS_BUCKET, Key=file_key)
+        file_bytes = io.BytesIO(response['Body'].read())
+        
+        # Process the file with new logic
+        st.write("📄 Processing COS file with new activity counting logic...")
+        results = process_file(file_bytes, file_key)
+        
+        # Activity categories
+        categories = {
+            "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
+            "MEP Works": ["Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"],
+            "Interior Finishing Works": ["Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"]
+        }
+        
+        # Initialize ai_response dictionary
+        if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
+            st.session_state.ai_response = {}
+            logger.info("Initialized ai_response in display_activity_count")
+        
+        # Process each block
+        all_activity_counts = {}
+        
+        for df, sheet_name in results:
+            if df is not None and not df.empty:
+                # Get activity counts for this sheet using foundation concreting logic
+                activity_counts = count_activities_by_foundation_concreting(df, sheet_name)
+                
+                # Store with clean block name
+                clean_name = sheet_name.strip()
+                if clean_name == "B1 Banket Hall & Finedine ":
+                    clean_name = "B1 Banket Hall & Finedine"
+                
+                all_activity_counts[clean_name] = activity_counts
+        
+        if not all_activity_counts:
+            st.error("❌ No activity counts found from COS tracker")
+            return
+        
+        # Display results
+        st.write("## 📊 Activity Counts by Block (Based on Actual Finish Dates)")
+        
+        # Process each block and create AI response structure
+        for block_name, activity_counts in sorted(all_activity_counts.items()):
+            st.write(f"### 🏢 {block_name}")
+            
+            # Create AI response structure for this block
+            ai_data = []
+            
+            for category, activities in categories.items():
+                category_data = {
+                    "Category": category,
+                    "Activities": []
+                }
+                
+                for activity in activities:
+                    # Get count from COS data if available
+                    count = activity_counts.get(activity, 0)
+                    
+                    # IMPORTANT: If this is "Slab conduting", use Concreting's count
+                    if activity == "Slab conduting":
+                        count = activity_counts.get("Concreting", 0)
+                    
+                    category_data["Activities"].append({
+                        "Activity Name": activity,
+                        "Total": int(count)
+                    })
+                
+                ai_data.append(category_data)
+            
+            # Store in session state
+            st.session_state.ai_response[block_name] = ai_data
+            logger.info(f"Stored ai_response for {block_name}: {ai_data}")
+            
+            # Display as table
+            display_data = []
+            for category_data in ai_data:
+                category = category_data["Category"]
+                for activity in category_data["Activities"]:
+                    display_data.append({
+                        "Category": category,
+                        "Activity Name": activity["Activity Name"],
+                        "Count": activity["Total"]
+                    })
+            
+            display_df = pd.DataFrame(display_data)
+            
+            # Show by category
+            for category in ["Civil Works", "MEP Works", "Interior Finishing Works"]:
+                category_df = display_df[display_df["Category"] == category]
+                if not category_df.empty:
+                    st.write(f"**{category}**")
+                    st.table(category_df[["Activity Name", "Count"]])
+        
+        # Create consolidated summary
+        st.write("### 📈 Consolidated Activity Summary Across All Blocks")
+        
+        category_mapping = {
+            "Concreting": "Civil Works",
+            "Shuttering": "Civil Works", 
+            "Reinforcement": "Civil Works",
+            "De-Shuttering": "Civil Works",
+            "Plumbing Works": "MEP Works",
+            "Slab conduting": "MEP Works",
+            "Wall Conduiting": "MEP Works", 
+            "Wiring & Switch Socket": "MEP Works",
+            "Floor Tiling": "Interior Finishing Works",
+            "POP & Gypsum Plaster": "Interior Finishing Works",
+            "Wall Tiling": "Interior Finishing Works",
+            "Waterproofing – Sunken": "Interior Finishing Works"
+        }
+        
+        consolidated_summary = {}
+        for block_name, ai_data in st.session_state.ai_response.items():
+            for category_data in ai_data:
+                for activity in category_data["Activities"]:
+                    activity_name = activity["Activity Name"]
+                    count = activity["Total"]
+                    
+                    if activity_name not in consolidated_summary:
+                        consolidated_summary[activity_name] = 0
+                    consolidated_summary[activity_name] += count
+        
+        # Display consolidated
+        consolidated_data = []
+        for activity_name, total_count in sorted(consolidated_summary.items()):
+            category = category_mapping.get(activity_name, "Other")
+            consolidated_data.append({
+                "Category": category,
+                "Activity Name": activity_name,
+                "Total Count": total_count
+            })
+        
+        consolidated_df = pd.DataFrame(consolidated_data)
+        
+        for category in ["Civil Works", "MEP Works", "Interior Finishing Works"]:
+            category_df = consolidated_df[consolidated_df["Category"] == category]
+            if not category_df.empty:
+                st.write(f"**{category}**")
+                st.table(category_df[["Activity Name", "Total Count"]])
+        
+        st.success("✅ Activity counts updated successfully from COS tracker!")
+        
+    except Exception as e:
+        st.error(f"❌ Error fetching COS data: {str(e)}")
+        logger.error(f"Error fetching COS data: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 
@@ -1278,173 +1546,68 @@ def getTotal(ai_data):
         return [0] * len(st.session_state.get('sheduledf', pd.DataFrame()).index)
 
 # Function to handle activity count display
-def display_activity_count():
-    """
-    Updated version that uses COS tracker data (Column G and L) to count activities.
-    Uses Foundation Concreting as the base count for related Civil Works activities.
-    """
-    if 'file_key' not in st.session_state or not st.session_state.file_key:
-        st.error("❌ No COS file found. Please fetch COS data first.")
-        return
-    
+def run_analysis_and_display():
     try:
-        # Initialize COS client
-        cos_client = initialize_cos_client()
-        if not cos_client:
-            st.error("❌ Failed to initialize COS client")
-            return
-        
-        # Fetch the file
-        file_key = st.session_state.file_key
-        st.write(f"📂 Fetching file: **{file_key}**")
-        
-        response = cos_client.get_object(Bucket=COS_BUCKET, Key=file_key)
-        file_bytes = io.BytesIO(response['Body'].read())
-        
-        # Process the file with new logic
-        st.write("🔄 Processing COS file with new activity counting logic...")
-        results = process_file(file_bytes, file_key)
-        
-        # Activity categories
-        categories = {
-            "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
-            "MEP Works": ["Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"],
-            "Interior Finishing Works": ["Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"]
-        }
-        
-        # Initialize ai_response dictionary
+        st.write("Running stage-wise status analysis...")
+        AnalyzeStatusManually()
+        st.success("Stage-wise status analysis completed successfully!")
+
         if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
             st.session_state.ai_response = {}
-            logger.info("Initialized ai_response in display_activity_count")
+            logger.info("Initialized st.session_state.ai_response in run_analysis_and_display")
+
+        st.write("Displaying activity counts and generating AI data...")
+        display_activity_count()
+        st.success("Activity counts displayed successfully!")
+
+        st.write("Checking AI data totals...")
+        logger.info(f"st.session_state.ai_response contents: {st.session_state.ai_response}")
+        if not st.session_state.ai_response:
+            st.error("❌ No AI data available in st.session_state.ai_response. Attempting to regenerate.")
+            logger.error("No AI data in st.session_state.ai_response after display_activity_count")
+            display_activity_count()
+            if not st.session_state.ai_response:
+                st.error("❌ Failed to regenerate AI data. Please check data fetching and try again.")
+                logger.error("Failed to regenerate AI data")
+                return
+
+        st.write("Generating consolidated checklist Excel file with stage-based sheets...")
         
-        # Process each block
-        all_activity_counts = {}
-        
-        for df, sheet_name in results:
-            if df is not None and not df.empty:
-                # Get activity counts for this sheet using foundation concreting logic
-                activity_counts = count_activities_by_foundation_concreting(df, sheet_name)
-                
-                # Store with clean block name
-                clean_name = sheet_name.strip()
-                if clean_name == "B1 Banket Hall & Finedine ":
-                    clean_name = "B1 Banket Hall & Finedine"
-                
-                all_activity_counts[clean_name] = activity_counts
-        
-        if not all_activity_counts:
-            st.error("❌ No activity counts found from COS tracker")
+        # Check if stage analysis exists
+        if 'stage_analysis' not in st.session_state:
+            st.error("❌ No stage analysis data available. Please ensure stage analysis ran successfully.")
+            logger.error("No stage_analysis in st.session_state")
             return
+
+        structure_analysis = st.session_state.get('structure_analysis', None)
+
+        with st.spinner("Generating Excel file with 7 stage sheets... This may take a moment."):
+            excel_file = generate_consolidated_Checklist_excel(structure_analysis, st.session_state.ai_response)
         
-        # Display results
-        st.write("## 📊 Activity Counts by Block (Based on Actual Finish Dates)")
-        
-        # Process each block and create AI response structure
-        for block_name, activity_counts in sorted(all_activity_counts.items()):
-            st.write(f"### 🏢 {block_name}")
+        if excel_file:
+            timestamp = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%Y%m%d_%H%M')
+            file_name = f"Consolidated_Checklist_WaveCityClub_Stages_{timestamp}.xlsx"
             
-            # Create AI response structure for this block
-            ai_data = []
-            
-            for category, activities in categories.items():
-                category_data = {
-                    "Category": category,
-                    "Activities": []
-                }
-                
-                for activity in activities:
-                    # Get count from COS data if available
-                    count = activity_counts.get(activity, 0)
-                    
-                    # IMPORTANT: If this is "Slab conduting", use Concreting's count
-                    if activity == "Slab conduting":
-                        count = activity_counts.get("Concreting", 0)
-                    
-                    category_data["Activities"].append({
-                        "Activity Name": activity,
-                        "Total": int(count)
-                    })
-                
-                ai_data.append(category_data)
-            
-            # Store in session state
-            st.session_state.ai_response[block_name] = ai_data
-            logger.info(f"Stored ai_response for {block_name}: {ai_data}")
-            
-            # Display as table
-            display_data = []
-            for category_data in ai_data:
-                category = category_data["Category"]
-                for activity in category_data["Activities"]:
-                    display_data.append({
-                        "Category": category,
-                        "Activity Name": activity["Activity Name"],
-                        "Count": activity["Total"]
-                    })
-            
-            display_df = pd.DataFrame(display_data)
-            
-            # Show by category
-            for category in ["Civil Works", "MEP Works", "Interior Finishing Works"]:
-                category_df = display_df[display_df["Category"] == category]
-                if not category_df.empty:
-                    st.write(f"**{category}**")
-                    st.table(category_df[["Activity Name", "Count"]])
-        
-        # Create consolidated summary
-        st.write("### 📈 Consolidated Activity Summary Across All Blocks")
-        
-        category_mapping = {
-            "Concreting": "Civil Works",
-            "Shuttering": "Civil Works", 
-            "Reinforcement": "Civil Works",
-            "De-Shuttering": "Civil Works",
-            "Plumbing Works": "MEP Works",
-            "Slab conduting": "MEP Works",
-            "Wall Conduiting": "MEP Works", 
-            "Wiring & Switch Socket": "MEP Works",
-            "Floor Tiling": "Interior Finishing Works",
-            "POP & Gypsum Plaster": "Interior Finishing Works",
-            "Wall Tiling": "Interior Finishing Works",
-            "Waterproofing – Sunken": "Interior Finishing Works"
-        }
-        
-        consolidated_summary = {}
-        for block_name, ai_data in st.session_state.ai_response.items():
-            for category_data in ai_data:
-                for activity in category_data["Activities"]:
-                    activity_name = activity["Activity Name"]
-                    count = activity["Total"]
-                    
-                    if activity_name not in consolidated_summary:
-                        consolidated_summary[activity_name] = 0
-                    consolidated_summary[activity_name] += count
-        
-        # Display consolidated
-        consolidated_data = []
-        for activity_name, total_count in sorted(consolidated_summary.items()):
-            category = category_mapping.get(activity_name, "Other")
-            consolidated_data.append({
-                "Category": category,
-                "Activity Name": activity_name,
-                "Total Count": total_count
-            })
-        
-        consolidated_df = pd.DataFrame(consolidated_data)
-        
-        for category in ["Civil Works", "MEP Works", "Interior Finishing Works"]:
-            category_df = consolidated_df[consolidated_df["Category"] == category]
-            if not category_df.empty:
-                st.write(f"**{category}**")
-                st.table(category_df[["Activity Name", "Total Count"]])
-        
-        st.success("✅ Activity counts updated successfully from COS tracker!")
-        
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.sidebar.download_button(
+                    label="📥 Download Stage-Based Checklist Excel",
+                    data=excel_file,
+                    file_name=file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_excel_button_stages",
+                    help="Click to download the consolidated checklist with 7 stage-based sheets."
+                )
+            st.success("Excel file with stage-based sheets generated successfully! Click the button above to download.")
+        else:
+            st.error("Failed to generate Excel file. Please check the logs for details.")
+            logger.error("Failed to generate Excel file")
+
     except Exception as e:
-        st.error(f"❌ Error fetching COS data: {str(e)}")
-        logger.error(f"Error fetching COS data: {str(e)}")
+        st.error(f"Error during analysis, display, or Excel generation: {str(e)}")
+        logger.error(f"Error during analysis, display, or Excel generation: {str(e)}")
         import traceback
-        st.code(traceback.format_exc())
+        st.error(traceback.format_exc())
 
 
 
@@ -1605,43 +1768,36 @@ async def initialize_and_fetch_data(email, password):
 
 
 def generate_consolidated_Checklist_excel(structure_analysis=None, activity_counts=None):
+    """
+    Updated Excel generation using pre-processed stage data from session_state
+    """
     try:
-        # Add validation at the beginning
-        if structure_analysis is None:
-            structure_analysis = st.session_state.get('structure_analysis', None)
-            if structure_analysis is None:
-                st.error("❌ No structure analysis data available.")
-                logger.error("structure_analysis is None in generate_consolidated_Checklist_excel")
-                return None
-        
         if activity_counts is None:
             activity_counts = st.session_state.get('ai_response', {})
             if not activity_counts:
                 st.error("❌ No activity counts data available.")
                 logger.error("activity_counts is empty in generate_consolidated_Checklist_excel")
                 return None
+        
+        # Check if stage analysis exists
+        if 'stage_analysis' not in st.session_state:
+            st.error("❌ Stage analysis not found. Please run AnalyzeStatusManually first!")
+            logger.error("No stage_analysis in st.session_state")
+            return None
 
-        # **IMPORTANT: First, let's log the unique tower names from structure_analysis**
-        if structure_analysis is not None and not structure_analysis.empty and 'tower_name' in structure_analysis.columns:
-            unique_towers = structure_analysis['tower_name'].unique()
-            logger.info(f"Unique tower names in structure_analysis: {list(unique_towers)}")
-            st.write("**Debug: Unique tower names in Asite data:**")
-            st.write(list(unique_towers))
-
-        # Define categories and activities according to new structure
+        # Define categories and activities
         categories = {
             "Civil Works": ["Concreting", "Shuttering", "Reinforcement", "De-Shuttering"],
             "MEP Works": ["Plumbing Works", "Slab conduting", "Wall Conduiting", "Wiring & Switch Socket"],
             "Interior Finishing Works": ["Floor Tiling", "POP & Gypsum Plaster", "Wall Tiling", "Waterproofing – Sunken"]
         }
 
-        # Define the COS to Asite activity name mapping (updated)
         cos_to_asite_mapping = {
             "Concreting": "Concreting",
             "Shuttering": "Shuttering", 
             "Reinforcement": "Reinforcement",
             "De-Shuttering": "De-Shuttering",
-            "Plumbing Works": "Plumbing Works",  # Will sum UP-First Fix and CP-First Fix
+            "Plumbing Works": "Plumbing Works",
             "Slab conduting": "Slab conduting",
             "Wall Conduiting": "Wall Conducting",
             "Wiring & Switch Socket": "Wiring & Switch Socket",
@@ -1651,10 +1807,9 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             "Waterproofing – Sunken": "Waterproofing - Sunken"
         }
 
-        # **UPDATED: Define block name mapping with EXACT Asite tower names (with trailing spaces and full descriptions)**
         block_to_asite_filter = {
             "B1 Banket Hall & Finedine": [
-                "01. Block (B1) Banquet Hall ",  # Note the space at end and "Banquet" spelling
+                "01. Block (B1) Banquet Hall ",
                 "02. Block (B1) Fine Dine"
             ],
             "B2 & B3": [
@@ -1671,328 +1826,263 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             "B11": "11. Block 11 (B11) "
         }
 
-        # Define blocks
         blocks = [
             "B1 Banket Hall & Finedine", "B5", "B6", "B7", "B9", "B8",
             "B2 & B3", "B4", "B11", "B10"
         ]
 
-        consolidated_rows = []
-
-        # Process data for each block and category
-        for block in blocks:
-            block_key = block
-            for category, activities in categories.items():
-                # Process each activity in the category
-                for activity in activities:
-                    # Map COS activity name to Asite name(s)
-                    asite_activity = cos_to_asite_mapping.get(activity, activity)
-                    if isinstance(asite_activity, list):
-                        asite_activities = asite_activity
-                    else:
-                        asite_activities = [asite_activity]
-
-                    # **MODIFIED: Get completed count from structure_analysis with correct block filter**
-                    closed_checklist = 0
-                    if structure_analysis is not None and not structure_analysis.empty:
-                        # Get the Asite filter(s) for this block
-                        asite_filters = block_to_asite_filter.get(block, block)
-                        
-                        # Handle both single filter and multiple filters
-                        if isinstance(asite_filters, list):
-                            # Multiple filters (e.g., B1 or B2 & B3)
-                            for asite_filter in asite_filters:
-                                for asite_act in asite_activities:
-                                    matching_rows = structure_analysis[
-                                        (structure_analysis['tower_name'].str.strip() == asite_filter.strip()) &
-                                        (structure_analysis['activityName'] == asite_act)
-                                    ]
-                                    if not matching_rows.empty:
-                                        count = matching_rows['CompletedCount'].sum()
-                                        closed_checklist += count
-                                        logger.info(f"Block {block} (Asite: '{asite_filter}'), Activity: {asite_act}, Count: {count}")
-                                    else:
-                                        logger.info(f"No match for Block {block} (Asite: '{asite_filter}'), Activity: {asite_act}")
-                        else:
-                            # Single filter
-                            for asite_act in asite_activities:
-                                matching_rows = structure_analysis[
-                                    (structure_analysis['tower_name'].str.strip() == asite_filters.strip()) &
-                                    (structure_analysis['activityName'] == asite_act)
-                                ]
-                                if not matching_rows.empty:
-                                    count = matching_rows['CompletedCount'].sum()
-                                    closed_checklist += count
-                                    logger.info(f"Block {block} (Asite: '{asite_filters}'), Activity: {asite_act}, Count: {count}")
-                                else:
-                                    logger.info(f"No match for Block {block} (Asite: '{asite_filters}'), Activity: {asite_act}")
-
-                    # Get completed flats count from activity_counts (COS data)
-                    completed_flats = 0
-                    block_name_variations = [block_key, block]
-                    
-                    found_block = None
-                    for block_var in block_name_variations:
-                        if block_var in activity_counts:
-                            found_block = block_var
-                            break
-                    
-                    if found_block:
-                        ai_data = activity_counts[found_block]
-                        # Extract the total from AI response data
-                        if isinstance(ai_data, list):
-                            for category_data in ai_data:
-                                if isinstance(category_data, dict) and 'Activities' in category_data:
-                                    for activity_data in category_data['Activities']:
-                                        if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
-                                            completed_flats = activity_data.get('Total', 0)
-                                            break
-                                        # Special handling for Plumbing Works
-                                        elif activity == "Plumbing Works" and activity_data.get('Activity Name') == "Plumbing Works":
-                                            completed_flats = activity_data.get('Total', 0)
-                                            break
-
-                    # Calculate Open/Missing check list per clarified requirements
-                    in_progress = 0  # Not calculated in the current code
-                    if completed_flats == 0 or closed_checklist > completed_flats:
-                        open_missing = 0
-                    else:
-                        open_missing = abs(completed_flats - closed_checklist)
-
-                    # Use the first Asite activity name for display
-                    display_activity = asite_activities[0] if isinstance(asite_activity, list) else asite_activity
-
-                    consolidated_rows.append({
-                        "Block": block,
-                        "Category": category,
-                        "Activity Name": display_activity,
-                        "Completed Work*(Count of Flat)": completed_flats,
-                        "In progress": in_progress,
-                        "Closed checklist": closed_checklist,
-                        "Open/Missing check list": open_missing
-                    })
-        # Create DataFrame
-        df = pd.DataFrame(consolidated_rows)
-        if df.empty:
-            st.warning("No data available to generate consolidated checklist.")
-            return None
-
-        # Sort by Block and Category for consistency
-        df.sort_values(by=["Block", "Category"], inplace=True)
-
-        # Create a BytesIO buffer for the Excel file
+        # Create Excel workbook
         output = io.BytesIO()
         workbook = xlsxwriter.Workbook(output)
-        worksheet = workbook.add_worksheet("Consolidated Checklist")
 
-        # Define styles
         header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3'})
         total_format = workbook.add_format({'bold': True, 'bg_color': '#FFDAB9'})
         cell_format = workbook.add_format({'border': 1})
 
-        # Column headers
-        headers = ["Activity Name", "Completed", "In progress", "Closed checklist", "Open/Missing check list"]
+        # Generate each stage sheet using pre-processed data
+        for stage_name in STRUCTURAL_STAGES.keys():
+            worksheet = workbook.add_worksheet(stage_name)
+            logger.info(f"Creating sheet: {stage_name}")
+            
+            # Get pre-processed stage analysis
+            stage_analysis = st.session_state.stage_analysis.get(stage_name, pd.DataFrame())
+            
+            if stage_analysis.empty:
+                worksheet.write(0, 0, f"No data available for {stage_name}", header_format)
+                logger.warning(f"No data for stage {stage_name}")
+                continue
 
-        # Starting positions for each section
-        col_start = 1  # Start from column B
-        row_start = 0
+            consolidated_rows = []
 
-        # Group by Block
-        grouped_by_block = df.groupby('Block')
+            # Process data for each block and category
+            for block in blocks:
+                for category, activities in categories.items():
+                    for activity in activities:
+                        asite_activity = cos_to_asite_mapping.get(activity, activity)
+                        asite_activities = asite_activity if isinstance(asite_activity, list) else [asite_activity]
 
-        for block, block_group in grouped_by_block:
-            # Reset column position for each block
-            col_pos = col_start
+                        # Get closed_checklist from stage_analysis (already filtered by stage!)
+                        closed_checklist = 0
+                        asite_filters = block_to_asite_filter.get(block, block)
+                        
+                        if isinstance(asite_filters, list):
+                            for asite_filter in asite_filters:
+                                for asite_act in asite_activities:
+                                    matching_rows = stage_analysis[
+                                        (stage_analysis['tower_name'].str.strip() == asite_filter.strip()) &
+                                        (stage_analysis['activityName'] == asite_act)
+                                    ]
+                                    if not matching_rows.empty:
+                                        count = matching_rows['CompletedCount'].sum()
+                                        closed_checklist += count
+                                        logger.info(f"Sheet {stage_name}, Block {block} ('{asite_filter}'), Activity: {asite_act}, Count: {count}")
+                        else:
+                            for asite_act in asite_activities:
+                                matching_rows = stage_analysis[
+                                    (stage_analysis['tower_name'].str.strip() == asite_filters.strip()) &
+                                    (stage_analysis['activityName'] == asite_act)
+                                ]
+                                if not matching_rows.empty:
+                                    count = matching_rows['CompletedCount'].sum()
+                                    closed_checklist += count
+                                    logger.info(f"Sheet {stage_name}, Block {block} ('{asite_filters}'), Activity: {asite_act}, Count: {count}")
 
-            # Group Categories within this Block
-            grouped_by_category = block_group.groupby('Category')
+                        # Get COS data (Completed Work count)
+                        completed_flats = 0
+                        if block in activity_counts:
+                            ai_data = activity_counts[block]
+                            if isinstance(ai_data, list):
+                                for category_data in ai_data:
+                                    if isinstance(category_data, dict) and 'Activities' in category_data:
+                                        for activity_data in category_data['Activities']:
+                                            if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
+                                                completed_flats = activity_data.get('Total', 0)
+                                                break
 
-            # Process each Category side by side
-            for category, cat_group in grouped_by_category:
-                # Write category header
-                worksheet.merge_range(row_start, col_pos, row_start, col_pos + 4, f"{block} {category} Checklist Status", header_format)
-                row_pos = row_start + 1
+                        # Calculate open/missing
+                        in_progress = 0
+                        if completed_flats == 0 or closed_checklist > completed_flats:
+                            open_missing = 0
+                        else:
+                            open_missing = abs(completed_flats - closed_checklist)
 
-                # Write column headers
-                for i, header in enumerate(headers, start=0):
-                    worksheet.write(row_pos, col_pos + i, header, header_format)
-                row_pos += 1
+                        display_activity = asite_activities[0]
 
-                # Write activity data
-                for _, row in cat_group.iterrows():
-                    worksheet.write(row_pos, col_pos, row["Activity Name"], cell_format)
-                    worksheet.write(row_pos, col_pos + 1, row["Completed Work*(Count of Flat)"], cell_format)
-                    worksheet.write(row_pos, col_pos + 2, row["In progress"], cell_format)
-                    worksheet.write(row_pos, col_pos + 3, row["Closed checklist"], cell_format)
-                    worksheet.write(row_pos, col_pos + 4, row["Open/Missing check list"], cell_format)
+                        consolidated_rows.append({
+                            "Block": block,
+                            "Category": category,
+                            "Activity Name": display_activity,
+                            "Completed Work*(Count of Flat)": completed_flats,
+                            "In progress": in_progress,
+                            "Closed checklist": closed_checklist,
+                            "Open/Missing check list": open_missing
+                        })
+
+            # Write to worksheet
+            df = pd.DataFrame(consolidated_rows)
+            if df.empty:
+                worksheet.write(0, 0, f"No activities found for {stage_name}", header_format)
+                continue
+
+            df.sort_values(by=["Block", "Category"], inplace=True)
+
+            headers = ["Activity Name", "Completed", "In progress", "Closed checklist", "Open/Missing check list"]
+            col_start = 1
+            row_start = 0
+
+            grouped_by_block = df.groupby('Block')
+
+            for block, block_group in grouped_by_block:
+                col_pos = col_start
+                grouped_by_category = block_group.groupby('Category')
+
+                for category, cat_group in grouped_by_category:
+                    worksheet.merge_range(row_start, col_pos, row_start, col_pos + 4, 
+                                        f"{block} {category} - {stage_name}", header_format)
+                    row_pos = row_start + 1
+
+                    for i, header in enumerate(headers):
+                        worksheet.write(row_pos, col_pos + i, header, header_format)
                     row_pos += 1
 
-                # Write total pending checklist
-                total_pending = cat_group["Open/Missing check list"].sum()
-                worksheet.merge_range(row_pos, col_pos, row_pos, col_pos + 3, "Total pending check list", total_format)
-                worksheet.write(row_pos, col_pos + 4, total_pending, total_format)
-                row_pos += 2
+                    for _, row in cat_group.iterrows():
+                        worksheet.write(row_pos, col_pos, row["Activity Name"], cell_format)
+                        worksheet.write(row_pos, col_pos + 1, row["Completed Work*(Count of Flat)"], cell_format)
+                        worksheet.write(row_pos, col_pos + 2, row["In progress"], cell_format)
+                        worksheet.write(row_pos, col_pos + 3, row["Closed checklist"], cell_format)
+                        worksheet.write(row_pos, col_pos + 4, row["Open/Missing check list"], cell_format)
+                        row_pos += 1
 
-                # Move to the next column position (side-by-side sections)
-                col_pos += 6
+                    total_pending = cat_group["Open/Missing check list"].sum()
+                    worksheet.merge_range(row_pos, col_pos, row_pos, col_pos + 3, "Total pending check list", total_format)
+                    worksheet.write(row_pos, col_pos + 4, total_pending, total_format)
+                    row_pos += 2
 
-            # Move to the next block (below the current sections)
-            row_start = row_pos
+                    col_pos += 6
 
-        # Auto-adjust column widths for Sheet 1
-        for col in range(col_start, col_pos):
-            worksheet.set_column(col, col, 20)
+                row_start = row_pos
 
-        # Create Sheet 2: Checklist June
-        worksheet2 = workbook.add_worksheet("Checklist June")
+            for col in range(col_start, col_pos):
+                worksheet.set_column(col, col, 20)
+
+        # Create Summary Sheet: "Checklist June"
+        worksheet_summary = workbook.add_worksheet("Checklist June")
         current_row = 0
 
-        # Write title
-        worksheet2.write(current_row, 0, "Checklist: June", header_format)
+        worksheet_summary.write(current_row, 0, "Checklist: June", header_format)
         current_row += 1
 
-        # Write headers
-        headers = [
+        summary_headers = [
             "Site",
             "Total of Missing & Open Checklist-Civil",
             "Total of Missing & Open Checklist-MEP",
             "TOTAL"
         ]
-        for col, header in enumerate(headers, start=0):
-            worksheet2.write(current_row, col, header, header_format)
+        for col, header in enumerate(summary_headers, start=0):
+            worksheet_summary.write(current_row, col, header, header_format)
         current_row += 1
 
-        # Categorize categories into Civil and MEP
         def map_category_to_type(category):
             if category in ["Civil Works", "Interior Finishing Works"]:
                 return "Civil"
             elif category in ["MEP Works"]:
                 return "MEP"
             else:
-                return "Civil"  # Default to Civil
+                return "Civil"
 
-        # Aggregate open/missing counts by block and type (Civil/MEP)
         summary_data = {}
-        for _, row in df.iterrows():
-            block = row["Block"]
-            category = row["Category"]
-            open_missing = row["Open/Missing check list"]
+        
+        # Aggregate data from all stages
+        for stage_name in STRUCTURAL_STAGES.keys():
+            stage_analysis = st.session_state.stage_analysis.get(stage_name, pd.DataFrame())
             
-            # Convert block name to display format
-            if block == "B1 Banket Hall & Finedine":
-                site_name = "WaveCityClub-Block 01 Banket Hall & Finedine"
-            elif "&" in block:
-                block_num = block.replace(" & ", "&")
-                site_name = f"WaveCityClub-Block {block_num}"
-            else:
-                block_num = block[1:]
-                if len(block_num) == 1:
-                    block_num = f"0{block_num}"
-                site_name = f"WaveCityClub-Block {block_num}"
+            if stage_analysis.empty:
+                continue
+                
+            for block in blocks:
+                for category, activities in categories.items():
+                    for activity in activities:
+                        asite_activity = cos_to_asite_mapping.get(activity, activity)
+                        asite_activities = asite_activity if isinstance(asite_activity, list) else [asite_activity]
+                        
+                        closed_checklist = 0
+                        asite_filters = block_to_asite_filter.get(block, block)
+                        
+                        if isinstance(asite_filters, list):
+                            for asite_filter in asite_filters:
+                                for asite_act in asite_activities:
+                                    matching_rows = stage_analysis[
+                                        (stage_analysis['tower_name'].str.strip() == asite_filter.strip()) &
+                                        (stage_analysis['activityName'] == asite_act)
+                                    ]
+                                    if not matching_rows.empty:
+                                        closed_checklist += matching_rows['CompletedCount'].sum()
+                        else:
+                            for asite_act in asite_activities:
+                                matching_rows = stage_analysis[
+                                    (stage_analysis['tower_name'].str.strip() == asite_filters.strip()) &
+                                    (stage_analysis['activityName'] == asite_act)
+                                ]
+                                if not matching_rows.empty:
+                                    closed_checklist += matching_rows['CompletedCount'].sum()
+                        
+                        # Get COS data
+                        completed_flats = 0
+                        if block in activity_counts:
+                            ai_data = activity_counts[block]
+                            if isinstance(ai_data, list):
+                                for category_data in ai_data:
+                                    if isinstance(category_data, dict) and 'Activities' in category_data:
+                                        for activity_data in category_data['Activities']:
+                                            if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
+                                                completed_flats = activity_data.get('Total', 0)
+                                                break
+                        
+                        # Calculate open/missing
+                        if completed_flats > 0 and closed_checklist <= completed_flats:
+                            open_missing = abs(completed_flats - closed_checklist)
+                        else:
+                            open_missing = 0
+                        
+                        # Convert block name to display format
+                        if block == "B1 Banket Hall & Finedine":
+                            site_name = "WaveCityClub-Block 01 Banket Hall & Finedine"
+                        elif "&" in block:
+                            block_num = block.replace(" & ", "&")
+                            site_name = f"WaveCityClub-Block {block_num}"
+                        else:
+                            block_num = block[1:]
+                            if len(block_num) == 1:
+                                block_num = f"0{block_num}"
+                            site_name = f"WaveCityClub-Block {block_num}"
+                        
+                        type_ = map_category_to_type(category)
+                        
+                        if site_name not in summary_data:
+                            summary_data[site_name] = {"Civil": 0, "MEP": 0}
+                        
+                        summary_data[site_name][type_] += open_missing
 
-            type_ = map_category_to_type(category)
-            
-            if site_name not in summary_data:
-                summary_data[site_name] = {"Civil": 0, "MEP": 0}
-            
-            summary_data[site_name][type_] += open_missing
-
-        logger.info(f"Summary data for Sheet 2: {summary_data}")
-
-        # Write summary data to Sheet 2
+        # Write summary data
         for site_name, counts in sorted(summary_data.items()):
             civil_count = counts["Civil"]
             mep_count = counts["MEP"]
             total_count = civil_count + mep_count
             
-            worksheet2.write(current_row, 0, site_name, cell_format)
-            worksheet2.write(current_row, 1, civil_count, cell_format)
-            worksheet2.write(current_row, 2, mep_count, cell_format)
-            worksheet2.write(current_row, 3, total_count, cell_format)
-            
+            worksheet_summary.write(current_row, 0, site_name, cell_format)
+            worksheet_summary.write(current_row, 1, civil_count, cell_format)
+            worksheet_summary.write(current_row, 2, mep_count, cell_format)
+            worksheet_summary.write(current_row, 3, total_count, cell_format)
             current_row += 1
 
-        # Create Sheet 3: External Development Activities (Always create this sheet)
-        worksheet3 = workbook.add_worksheet("External Development Activities")
-        current_row = 0
-
-        # Write title
-        worksheet3.write(current_row, 0, "External Development Activities - Consolidated Report", header_format)
-        current_row += 2
-
-        # External Development Activities - Always include all activities
-        external_dev_activities = [
-            "Granular Sub-Base", 
-            "Kerb Stone", 
-            "Rain Water / Storm Line", 
-            "Saucer Drain / Paver Block",
-            "Sewer Line", 
-            "Stamp Concrete", 
-            "Storm Line", 
-            "WMM"
-        ]
-
-        # Write headers for External Development
-        ext_headers = ["Activity Name", "Total Count Across All Blocks"]
-        for col, header in enumerate(ext_headers, start=0):
-            worksheet3.write(current_row, col, header, header_format)
-        current_row += 1
-
-        # Always process and display all external development activities
-        logger.info("Creating External Development Activities table with all activities...")
-        grand_total = 0
-        
-        for activity in external_dev_activities:
-            total_count = 0
-            
-            # Check all blocks for this activity
-            if activity_counts:
-                block_keys = list(activity_counts.keys())
-                logger.info(f"Processing activity: {activity} across blocks: {block_keys}")
-                
-                for block_key in block_keys:
-                    ai_data = activity_counts[block_key]
-                    
-                    # Extract the total from AI response data
-                    if isinstance(ai_data, list):
-                        for category_data in ai_data:
-                            if isinstance(category_data, dict) and 'Category' in category_data:
-                                if category_data['Category'] == 'External Development Activities':
-                                    for activity_data in category_data['Activities']:
-                                        if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
-                                            activity_total = activity_data.get('Total', 0)
-                                            total_count += activity_total
-                                            logger.info(f"Found {activity} in {block_key}: {activity_total}")
-                                            break
-            
-            # Always write the activity to the sheet, even if count is 0
-            worksheet3.write(current_row, 0, activity, cell_format)
-            worksheet3.write(current_row, 1, total_count, cell_format)
-            grand_total += total_count
-            current_row += 1
-            logger.info(f"Added {activity} to External Development sheet with total: {total_count}")
-
-        # Add a summary row with grand total
-        current_row += 1
-        worksheet3.write(current_row, 0, "GRAND TOTAL", total_format)
-        worksheet3.write(current_row, 1, grand_total, total_format)
-        
-        # Add note about future updates
-        current_row += 2
-        worksheet3.write(current_row, 0, "Note: This table will reflect updated counts when data source is refreshed", 
-                        workbook.add_format({'italic': True, 'font_size': 10}))
-        
-        logger.info(f"External Development Activities sheet created with {len(external_dev_activities)} activities and grand total: {grand_total}")
-
-        # Auto-adjust column widths for all sheets
+        # Auto-adjust column widths
         for col in range(4):
-            worksheet2.set_column(col, col, 25)
-        for col in range(2):
-            worksheet3.set_column(col, col, 25)
+            worksheet_summary.set_column(col, col, 25)
 
-        # Close the workbook
         workbook.close()
         output.seek(0)
+        
+        logger.info("Successfully generated Excel file with 7 stage-based sheets")
         return output
 
     except Exception as e:
@@ -2002,13 +2092,12 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         logger.error(f"Full traceback: {traceback.format_exc()}")
         return None
 
-
 # Combined function to handle analysis and display
 def run_analysis_and_display():
     try:
-        st.write("Running status analysis...")
+        st.write("Running stage-wise status analysis...")
         AnalyzeStatusManually()
-        st.success("Status analysis completed successfully!")
+        st.success("Stage-wise status analysis completed successfully!")
 
         if 'ai_response' not in st.session_state or not isinstance(st.session_state.ai_response, dict):
             st.session_state.ai_response = {}
@@ -2029,54 +2118,34 @@ def run_analysis_and_display():
                 logger.error("Failed to regenerate AI data")
                 return
 
-        st.write("Generating consolidated checklist Excel file...")
-        structure_analysis = st.session_state.get('structure_analysis', None)
-        if structure_analysis is None:
-            st.error("❌ No structure analysis data available. Please ensure analysis ran successfully.")
-            logger.error("No structure_analysis in st.session_state")
+        st.write("Generating consolidated checklist Excel file with stage-based sheets...")
+        
+        # Check if stage analysis exists
+        if 'stage_analysis' not in st.session_state:
+            st.error("❌ No stage analysis data available. Please ensure stage analysis ran successfully.")
+            logger.error("No stage_analysis in st.session_state")
             return
 
-        # Fixed Debug statements - Handle the list structure properly
-        st.write("Debug - structure_analysis:")
-        if hasattr(structure_analysis, 'head'):
-            st.write(structure_analysis.head())
-        else:
-            st.write(f"Structure analysis type: {type(structure_analysis)}")
-            st.write(str(structure_analysis)[:500] + "..." if len(str(structure_analysis)) > 500 else str(structure_analysis))
-        
-        st.write("Debug - activity_counts keys:")
-        st.write(list(st.session_state.ai_response.keys()))
-        
-        st.write("Debug - activity_counts sample:")
-        if st.session_state.ai_response:
-            first_key = list(st.session_state.ai_response.keys())[0]
-            first_value = st.session_state.ai_response[first_key]
-            st.write(f"Type of first value: {type(first_value)}")
-            if isinstance(first_value, list):
-                st.write(f"Sample data (first few items): {first_value[:3] if len(first_value) > 3 else first_value}")
-            elif hasattr(first_value, 'head'):
-                st.write(first_value.head())
-            else:
-                st.write(str(first_value)[:500] + "..." if len(str(first_value)) > 500 else str(first_value))
+        structure_analysis = st.session_state.get('structure_analysis', None)
 
-        with st.spinner("Generating Excel file... This may take a moment."):
+        with st.spinner("Generating Excel file with 7 stage sheets... This may take a moment."):
             excel_file = generate_consolidated_Checklist_excel(structure_analysis, st.session_state.ai_response)
         
         if excel_file:
             timestamp = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%Y%m%d_%H%M')
-            file_name = f"Consolidated_Checklist_WaveCityClub_{timestamp}.xlsx"
+            file_name = f"Consolidated_Checklist_WaveCityClub_Stages_{timestamp}.xlsx"
             
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
                 st.sidebar.download_button(
-                    label="📥 Download Checklist Excel",
+                    label="📥 Download Stage-Based Checklist Excel",
                     data=excel_file,
                     file_name=file_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_excel_button",
-                    help="Click to download the consolidated checklist in Excel format."
+                    key="download_excel_button_stages",
+                    help="Click to download the consolidated checklist with 7 stage-based sheets."
                 )
-            st.success("Excel file generated successfully! Click the button above to download.")
+            st.success("Excel file with stage-based sheets generated successfully! Click the button above to download.")
         else:
             st.error("Failed to generate Excel file. Please check the logs for details.")
             logger.error("Failed to generate Excel file")
@@ -2084,6 +2153,8 @@ def run_analysis_and_display():
     except Exception as e:
         st.error(f"Error during analysis, display, or Excel generation: {str(e)}")
         logger.error(f"Error during analysis, display, or Excel generation: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
 
 # Streamlit UI
 st.markdown(
