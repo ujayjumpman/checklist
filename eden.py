@@ -1,3 +1,5 @@
+#changed code
+
 import streamlit as st
 import requests
 import json
@@ -1603,6 +1605,7 @@ async def initialize_and_fetch_data(email, password):
 
 
 # Updated generate_consolidated_Checklist_excel function with new categories
+# Updated generate_consolidated_Checklist_excel function with multiplier for Civil Works
 def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
     try:
         # Debug: Print activity_counts structure
@@ -1689,6 +1692,11 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
                                                     break
                         else:
                             logger.info(f"No COS data found for {tower}, {activity} completed_flats = 0")
+                        
+                        # *** MULTIPLY BY 2 FOR CIVIL WORKS ***
+                        if category == "Civil Works":
+                            completed_flats = completed_flats * 2
+                            logger.info(f"Applied Civil Works multiplier (x2) for {activity}: {completed_flats}")
                         
                         # Get closed checklist from Asite (normal processing)
                         asite_activity = cos_to_asite_mapping.get(activity, activity)
@@ -1782,6 +1790,11 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
                                             break
                     else:
                         logger.info(f"No COS data found for {tower} - {activity}, completed_flats = 0")
+
+                    # *** MULTIPLY BY 2 FOR CIVIL WORKS ***
+                    if category == "Civil Works":
+                        completed_flats = completed_flats * 2
+                        logger.info(f"Applied Civil Works multiplier (x2) for {activity}: {completed_flats}")
 
                     # Calculate Open/Missing check list per clarified requirements
                     in_progress = 0  # Not calculated in the current code
