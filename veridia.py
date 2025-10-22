@@ -97,6 +97,7 @@ def initialize_session_state():
         st.session_state.cos_tname_tower4a = None
         st.session_state.cos_tname_tower4b = None
         st.session_state.cos_tname_tower5 = None
+        st.session_state.cos_tname_tower6 = None
         st.session_state.cos_tname_tower7 = None
         
         # COS client variables
