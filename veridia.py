@@ -3393,9 +3393,9 @@ def generate_consolidated_Checklist_excel(ai_data):
             
             # HARDCODE VALUES FOR TOWER 6
             if tower_name == "T6" and activity_name == "Concreting" and category == "Civil Works":
-                cos_count = 78
-                logger.info(f"HARDCODED: Tower 6 Concreting set to 78 (was {cos_data['count']})")
-                st.write(f"✓ Hardcoded Tower 6 Concreting to 78")
+                cos_count = 84
+                logger.info(f"HARDCODED: Tower 6 Concreting set to 84 (was {cos_data['count']})")
+                st.write(f"✓ Hardcoded Tower 6 Concreting to 84")
 
             if tower_name == "T4A" and activity_name == "POP & Gypsum Plaster":
                 cos_count = 96
@@ -3418,9 +3418,9 @@ def generate_consolidated_Checklist_excel(ai_data):
                 st.write(f"✓ Hardcoded Tower 4B Waterproofing - Sunken to 96")
             
             if tower_name == "T6" and activity_name == "Slab Conduting":
-                cos_count = 78
-                logger.info(f"HARDCODED: Tower 6 Slab Conduting set to 78 (was {cos_data['count']})")
-                st.write(f"✓ Hardcoded Tower 6 Slab Conduting to 78")
+                cos_count = 84
+                logger.info(f"HARDCODED: Tower 6 Slab Conduting set to 84 (was {cos_data['count']})")
+                st.write(f"✓ Hardcoded Tower 6 Slab Conduting to 84")
                 
             if tower_name == "T6":
                 logger.info(f"=== T6 ACTIVITY CALCULATION ===")
