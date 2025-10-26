@@ -2695,6 +2695,97 @@ def generatePrompt(combined_data, slab):
                     if not isinstance(tower_data, dict) or "Tower" not in tower_data or "Categories" not in tower_data:
                         logger.warning(f"Invalid tower data in {source}: {tower_data}")
                         return (combined_data)
+            
+            # **FIX: Check if Tower 6 is missing from Asite AI response and add it manually**
+            asite_towers_in_ai = [tower.get("Tower") for tower in parsed_json.get("Asite", [])]
+            logger.info(f"Towers in AI Asite response: {asite_towers_in_ai}")
+            
+            if "Tower 6" not in asite_towers_in_ai:
+                logger.warning("Tower 6 missing from AI Asite response, attempting to add from original DataFrame")
+                st.warning("⚠️ Tower 6 was missing from AI response, adding it manually from source data")
+                
+                # Get Tower 6 data from original Asite DataFrame
+                if not asite_df.empty and "Tower 6" in asite_df['Tower'].values:
+                    tower6_asite = asite_df[asite_df['Tower'] == 'Tower 6']
+                    logger.info(f"Found {len(tower6_asite)} Tower 6 records in original Asite DataFrame")
+                    
+                    # Build Tower 6 structure for AI response
+                    tower6_structure = {
+                        "Tower": "Tower 6",
+                        "Categories": [
+                            {
+                                "Category": "MEP Works",
+                                "Activities": []
+                            },
+                            {
+                                "Category": "Interior Finishing Works",
+                                "Activities": []
+                            },
+                            {
+                                "Category": "Civil Works",
+                                "Activities": []
+                            },
+                            {
+                                "Category": "External Development",
+                                "Activities": []
+                            }
+                        ]
+                    }
+                    
+                    # Map activities to categories based on Asite categorization
+                    activity_to_category = {
+                        "Wall Conduting": "MEP Works",
+                        "Slab Conduting": "MEP Works",
+                        "Plumbing Works": "MEP Works",
+                        "Wiring & Switch Socket": "MEP Works",
+                        "Waterproofing - Sunken": "Interior Finishing Works",
+                        "Wall Tiling": "Interior Finishing Works",
+                        "Floor Tiling": "Interior Finishing Works",
+                        "POP & Gypsum Plaster": "Interior Finishing Works",
+                        "Shuttering": "Civil Works",
+                        "Reinforcement": "Civil Works",
+                        "Concreting": "Civil Works",
+                        "De-shuttering": "Civil Works",
+                        "De-Shuttering": "Civil Works",  # Handle case variation
+                        "Sewer Line": "External Development",
+                        "Rain Water/Storm Line": "External Development",
+                        "Granular Sub-base": "External Development",
+                        "WMM": "External Development",
+                        "Saucer drain/Paver block": "External Development",
+                        "Kerb Stone": "External Development",
+                        "Brickwork": "Civil Works"
+                    }
+                    
+                    # Populate activities from DataFrame
+                    for _, row in tower6_asite.iterrows():
+                        activity_name = row['Activity Name']
+                        
+                        # **SKIP only Brickwork for T6**
+                        if activity_name == "Brickwork":
+                            logger.info(f"Skipping T6 activity: {activity_name} (filtered out)")
+                            continue
+                        
+                        count = int(row['Count']) if pd.notna(row['Count']) else 0
+                        category = activity_to_category.get(activity_name, "MEP Works")  # Default to MEP Works
+                        
+                        # Find the category in the structure and add the activity
+                        for cat in tower6_structure["Categories"]:
+                            if cat["Category"] == category:
+                                cat["Activities"].append({
+                                    "Activity Name": activity_name,
+                                    "Total": count
+                                })
+                                logger.info(f"Added Tower 6 activity: {activity_name} = {count} to category {category}")
+                                break
+                    
+                    # Add Tower 6 to Asite response
+                    parsed_json["Asite"].append(tower6_structure)
+                    logger.info("✓ Successfully added Tower 6 to Asite AI response")
+                    st.success("✓ Tower 6 data restored to AI response")
+                else:
+                    logger.error("Tower 6 not found in original Asite DataFrame either")
+                    st.error("❌ Tower 6 data not available in source data")
+            
             return json.dumps(parsed_json, indent=2)  # Return standardized JSON
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON after repair attempt: {str(e)}")
@@ -3190,6 +3281,24 @@ def generate_consolidated_Checklist_excel(ai_data):
                         key = (tower_name, activity_name, category)
                         cos_data_dict[key] = {"count": count, "open_missing": open_missing}
                         
+                        # **HARDCODE: Set Tower 6 Civil Works and Slab Conduting to 78**
+                        if tower_name == "T6":
+                            if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
+                                cos_data_dict[key] = {"count": 78, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T6 {activity_name} set to 78")
+                            elif activity_name == "Slab Conduting":
+                                cos_data_dict[key] = {"count": 78, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T6 Slab Conduting set to 78")
+                        
+                        # **HARDCODE: Set Tower 5 Civil Works and Slab Conduting to 74**
+                        if tower_name == "T5":
+                            if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
+                                cos_data_dict[key] = {"count": 74, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T5 {activity_name} set to 74")
+                            elif activity_name == "Slab Conduting":
+                                cos_data_dict[key] = {"count": 74, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T5 Slab Conduting set to 74")
+                        
                         if tower_name == "T6" and count > 0:
                             logger.info(f"T6 COS stored: {key} -> {cos_data_dict[key]}")
 
@@ -3391,11 +3500,14 @@ def generate_consolidated_Checklist_excel(ai_data):
             cos_count = cos_data["count"]
             asite_count = asite_data["count"]
             
-            # HARDCODE VALUES FOR TOWER 6
-            if tower_name == "T6" and activity_name == "Concreting" and category == "Civil Works":
-                cos_count = 78
-                logger.info(f"HARDCODED: Tower 6 Concreting set to 78 (was {cos_data['count']})")
-                st.write(f"✓ Hardcoded Tower 6 Concreting to 78")
+            # Debug T7 Wall Conduting
+            if tower_name == "T7" and activity_name == "Wall Conduting":
+                logger.info(f"=== T7 WALL CONDUTING DEBUG ===")
+                logger.info(f"Key: {key}")
+                logger.info(f"COS data: {cos_data}")
+                logger.info(f"Asite data: {asite_data}")
+                logger.info(f"COS count: {cos_count}, Asite count: {asite_count}")
+                st.write(f"✓ T7 Wall Conduting - COS: {cos_count}, Asite: {asite_count}")
 
             if tower_name == "T4A" and activity_name == "POP & Gypsum Plaster":
                 cos_count = 96
@@ -3417,11 +3529,28 @@ def generate_consolidated_Checklist_excel(ai_data):
                 logger.info(f"HARDCODED: Tower 4B Waterproofing - Sunken set to 96 (was {cos_data['count']})")
                 st.write(f"✓ Hardcoded Tower 4B Waterproofing - Sunken to 96")
             
-            if tower_name == "T6" and activity_name == "Slab Conduting":
-                cos_count = 78
-                logger.info(f"HARDCODED: Tower 6 Slab Conduting set to 78 (was {cos_data['count']})")
-                st.write(f"✓ Hardcoded Tower 6 Slab Conduting to 78")
-                
+            # **HARDCODE: Tower 6 Civil Works and Slab Conduting to 78**
+            if tower_name == "T6":
+                if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
+                    cos_count = 78
+                    logger.info(f"HARDCODED: T6 {activity_name} set to 78 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T6 {activity_name} to 78")
+                elif activity_name == "Slab Conduting":
+                    cos_count = 78
+                    logger.info(f"HARDCODED: T6 Slab Conduting set to 78 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T6 Slab Conduting to 78")
+            
+            # **HARDCODE: Tower 5 Civil Works and Slab Conduting to 74**
+            if tower_name == "T5":
+                if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
+                    cos_count = 74
+                    logger.info(f"HARDCODED: T5 {activity_name} set to 74 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T5 {activity_name} to 74")
+                elif activity_name == "Slab Conduting":
+                    cos_count = 74
+                    logger.info(f"HARDCODED: T5 Slab Conduting set to 74 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T5 Slab Conduting to 74")
+            
             if tower_name == "T6":
                 logger.info(f"=== T6 ACTIVITY CALCULATION ===")
                 logger.info(f"Key: {key}")
@@ -3488,6 +3617,10 @@ def generate_consolidated_Checklist_excel(ai_data):
             
             for activity_name in civil_works_activities:
                 if activity_name not in existing_t6_activities:
+                    # Get the Asite count for this activity from asite_data_dict
+                    asite_key = ("T6", activity_name, "Civil Works")
+                    asite_count_for_activity = asite_data_dict.get(asite_key, {"count": 0})["count"]
+                    
                     # Add missing Civil Works activity for T6
                     new_row = {
                         "Tower": "T6",
@@ -3495,14 +3628,59 @@ def generate_consolidated_Checklist_excel(ai_data):
                         "Activity Name": activity_name,
                         "Completed Work*(Count of Flat)": t6_concreting_count,
                         "In Progress Work*(Count of Flat)": 0,
-                        "Closed checklist against completed work": 0,
-                        "Open/Missing check list": t6_concreting_count
+                        "Closed checklist against completed work": asite_count_for_activity,
+                        "Open/Missing check list": max(0, t6_concreting_count - asite_count_for_activity)
                     }
                     consolidated_rows.append(new_row)
-                    logger.info(f"✓ Added missing T6 Civil Works activity: {activity_name} with count {t6_concreting_count}")
-                    st.write(f"✓ Added T6 {activity_name} with count {t6_concreting_count}")
+                    logger.info(f"✓ Added missing T6 Civil Works activity: {activity_name} with COS count {t6_concreting_count} and Asite count {asite_count_for_activity}")
+                    st.write(f"✓ Added T6 {activity_name} with COS={t6_concreting_count}, Asite={asite_count_for_activity}")
 
         logger.info(f"Consolidated rows after T6 fix: {len(consolidated_rows)}")
+        
+        # **FILTER: Remove Brickwork from T6 and handle De-shuttering duplicates**
+        logger.info("=== FILTERING T6 ACTIVITIES ===")
+        
+        # First, collect T6 De-shuttering entries to find which one has data
+        t6_deshuttering_rows = [row for row in consolidated_rows 
+                               if row["Tower"] == "T6" 
+                               and row["Activity Name"].lower() == "de-shuttering"]
+        
+        # Keep the De-shuttering with Asite count, remove the one with 0
+        deshuttering_to_keep = None
+        if t6_deshuttering_rows:
+            # Sort by Asite count descending, keep the one with highest count
+            t6_deshuttering_rows.sort(key=lambda x: x["Closed checklist against completed work"], reverse=True)
+            deshuttering_to_keep = t6_deshuttering_rows[0]
+            logger.info(f"Keeping De-shuttering with Asite count: {deshuttering_to_keep['Closed checklist against completed work']}")
+        
+        # Filter: Remove Brickwork and duplicate De-shuttering entries
+        original_count = len(consolidated_rows)
+        filtered_rows = []
+        deshuttering_added = False
+        
+        for row in consolidated_rows:
+            # Remove Brickwork for T6
+            if row["Tower"] == "T6" and row["Activity Name"] == "Brickwork":
+                logger.info(f"Removing T6 Brickwork")
+                continue
+            
+            # Handle De-shuttering - keep only the one with Asite count
+            if row["Tower"] == "T6" and row["Activity Name"].lower() == "de-shuttering":
+                if not deshuttering_added and deshuttering_to_keep:
+                    # Add the one with Asite count (normalized to "De-shuttering")
+                    row["Activity Name"] = "De-shuttering"  # Normalize the name
+                    filtered_rows.append(row)
+                    deshuttering_added = True
+                    logger.info(f"Added T6 De-shuttering with Asite={row['Closed checklist against completed work']}")
+                continue
+            
+            filtered_rows.append(row)
+        
+        consolidated_rows = filtered_rows
+        filtered_count = original_count - len(consolidated_rows)
+        if filtered_count > 0:
+            logger.info(f"Filtered {filtered_count} T6 activities (removed Brickwork and duplicate De-shuttering)")
+            st.write(f"✓ Filtered T6: removed Brickwork and deduplicated De-shuttering")
 
         # Propagate Concreting count to other Civil Works activities
         concreting_counts = {}
@@ -4212,4 +4390,3 @@ async def initialize_and_fetch_data(email, password):
         update_progress(100, "Initialization completed!")
         st.sidebar.success("All data fetched successfully!")
         return True
-
