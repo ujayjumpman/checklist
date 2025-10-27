@@ -3281,23 +3281,23 @@ def generate_consolidated_Checklist_excel(ai_data):
                         key = (tower_name, activity_name, category)
                         cos_data_dict[key] = {"count": count, "open_missing": open_missing}
                         
-                        # **HARDCODE: Set Tower 6 Civil Works and Slab Conduting to 78**
+                        # **HARDCODE: Set Tower 6 Civil Works and Slab Conduting to 84**
                         if tower_name == "T6":
                             if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
-                                cos_data_dict[key] = {"count": 78, "open_missing": open_missing}
-                                logger.info(f"HARDCODED: T6 {activity_name} set to 78")
+                                cos_data_dict[key] = {"count": 84, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T6 {activity_name} set to 84")
                             elif activity_name == "Slab Conduting":
-                                cos_data_dict[key] = {"count": 78, "open_missing": open_missing}
-                                logger.info(f"HARDCODED: T6 Slab Conduting set to 78")
+                                cos_data_dict[key] = {"count": 84, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T6 Slab Conduting set to 84")
                         
-                        # **HARDCODE: Set Tower 5 Civil Works and Slab Conduting to 74**
+                        # **HARDCODE: Set Tower 5 Civil Works and Slab Conduting to 76**
                         if tower_name == "T5":
                             if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
-                                cos_data_dict[key] = {"count": 74, "open_missing": open_missing}
-                                logger.info(f"HARDCODED: T5 {activity_name} set to 74")
+                                cos_data_dict[key] = {"count": 76, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T5 {activity_name} set to 76")
                             elif activity_name == "Slab Conduting":
-                                cos_data_dict[key] = {"count": 74, "open_missing": open_missing}
-                                logger.info(f"HARDCODED: T5 Slab Conduting set to 74")
+                                cos_data_dict[key] = {"count": 76, "open_missing": open_missing}
+                                logger.info(f"HARDCODED: T5 Slab Conduting set to 76")
                         
                         if tower_name == "T6" and count > 0:
                             logger.info(f"T6 COS stored: {key} -> {cos_data_dict[key]}")
@@ -3529,27 +3529,27 @@ def generate_consolidated_Checklist_excel(ai_data):
                 logger.info(f"HARDCODED: Tower 4B Waterproofing - Sunken set to 96 (was {cos_data['count']})")
                 st.write(f"✓ Hardcoded Tower 4B Waterproofing - Sunken to 96")
             
-            # **HARDCODE: Tower 6 Civil Works and Slab Conduting to 78**
+            # **HARDCODE: Tower 6 Civil Works and Slab Conduting to 84**
             if tower_name == "T6":
                 if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
-                    cos_count = 78
-                    logger.info(f"HARDCODED: T6 {activity_name} set to 78 (was {cos_data['count']})")
-                    st.write(f"✓ Hardcoded T6 {activity_name} to 78")
+                    cos_count = 84
+                    logger.info(f"HARDCODED: T6 {activity_name} set to 84 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T6 {activity_name} to 84")
                 elif activity_name == "Slab Conduting":
-                    cos_count = 78
-                    logger.info(f"HARDCODED: T6 Slab Conduting set to 78 (was {cos_data['count']})")
-                    st.write(f"✓ Hardcoded T6 Slab Conduting to 78")
+                    cos_count = 84
+                    logger.info(f"HARDCODED: T6 Slab Conduting set to 84 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T6 Slab Conduting to 84")
             
-            # **HARDCODE: Tower 5 Civil Works and Slab Conduting to 74**
+            # **HARDCODE: Tower 5 Civil Works and Slab Conduting to 76**
             if tower_name == "T5":
                 if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
-                    cos_count = 74
-                    logger.info(f"HARDCODED: T5 {activity_name} set to 74 (was {cos_data['count']})")
-                    st.write(f"✓ Hardcoded T5 {activity_name} to 74")
+                    cos_count = 76
+                    logger.info(f"HARDCODED: T5 {activity_name} set to 76 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T5 {activity_name} to 76")
                 elif activity_name == "Slab Conduting":
-                    cos_count = 74
-                    logger.info(f"HARDCODED: T5 Slab Conduting set to 74 (was {cos_data['count']})")
-                    st.write(f"✓ Hardcoded T5 Slab Conduting to 74")
+                    cos_count = 76
+                    logger.info(f"HARDCODED: T5 Slab Conduting set to 76 (was {cos_data['count']})")
+                    st.write(f"✓ Hardcoded T5 Slab Conduting to 76")
             
             if tower_name == "T6":
                 logger.info(f"=== T6 ACTIVITY CALCULATION ===")
@@ -4390,3 +4390,4 @@ async def initialize_and_fetch_data(email, password):
         update_progress(100, "Initialization completed!")
         st.sidebar.success("All data fetched successfully!")
         return True
+
