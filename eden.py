@@ -5719,7 +5719,7 @@ def getTotal(ai_data):
         return [0] * len(st.session_state.get('sheduledf', pd.DataFrame()).index)
 
 # UPDATED: Function to handle activity count display
-d# UPDATED: Function to handle activity count display
+# UPDATED: Function to handle activity count display
 def display_activity_count():
     # Updated specific activities according to new categorization
     specific_activities = [
@@ -6638,6 +6638,9 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
+
+
+
 
 
 
