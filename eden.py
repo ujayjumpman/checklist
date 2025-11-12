@@ -8364,6 +8364,7 @@ async def initialize_and_fetch_data(email, password):
 
 # Updated generate_consolidated_Checklist_excel function with new categories
 # Updated generate_consolidated_Checklist_excel function with multiplier for Civil Works
+# Updated generate_consolidated_Checklist_excel function with Slab Conduting fix
 def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
     try:
         # Debug: Print activity_counts structure
@@ -8451,10 +8452,16 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
                         else:
                             logger.info(f"No COS data found for {tower}, {activity} completed_flats = 0")
                         
-                        # *** APPLY FORMULA (count*2)-1 FOR CIVIL WORKS ***
-                        if category == "Civil Works":
+                        # *** APPLY FORMULA (count*2)-1 ONLY FOR CIVIL WORKS ACTIVITIES (NOT Slab Conduting) ***
+                        # Slab Conduting is in MEP Works category, so it should NOT have the formula applied
+                        if activity in ["Shuttering", "Reinforcement", "De-Shuttering"]:
+                            # These are Civil Works activities, apply the formula
                             completed_flats = (completed_flats * 2) - 1
                             logger.info(f"Applied Civil Works formula ((count*2)-1) for {activity}: {completed_flats}")
+                        elif activity == "Slab Conduting":
+                            # Slab Conduting is MEP Works - keep the count as is (concreting - 5)
+                            # The -5 adjustment is already done in count_concreting_from_cos
+                            logger.info(f"Slab Conduting count (MEP Works, no formula): {completed_flats}")
                         
                         # Get closed checklist from Asite (normal processing)
                         asite_activity = cos_to_asite_mapping.get(activity, activity)
@@ -8549,10 +8556,11 @@ def generate_consolidated_Checklist_excel(structure_analysis, activity_counts):
                     else:
                         logger.info(f"No COS data found for {tower} - {activity}, completed_flats = 0")
 
-                    # *** APPLY FORMULA (count*2)-1 FOR CIVIL WORKS ***
-                    if category == "Civil Works":
+                    # *** APPLY FORMULA (count*2)-1 ONLY FOR CONCRETING (Civil Works) ***
+                    # Only apply to Concreting itself, not other activities in regular processing
+                    if activity == "Concreting":
                         completed_flats = (completed_flats * 2) - 1
-                        logger.info(f"Applied Civil Works formula ((count*2)-1) for {activity}: {completed_flats}")
+                        logger.info(f"Applied Civil Works formula ((count*2)-1) for Concreting: {completed_flats}")
 
                     # Calculate Open/Missing check list per clarified requirements
                     in_progress = 0  # Not calculated in the current code
@@ -8907,6 +8915,7 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
+
 
 
 
