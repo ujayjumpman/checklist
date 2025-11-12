@@ -1858,6 +1858,10 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             for block in blocks:
                 for category, activities in categories.items():
                     for activity in activities:
+                        # **NEW: Skip Slab conduting for stages other than 1st Floor Slab and 2nd Floor Roof Slab**
+                        if activity == "Slab conduting" and stage_name not in ["1st Floor Slab", "2nd Floor Roof Slab"]:
+                            continue
+                        
                         asite_activity = cos_to_asite_mapping.get(activity, activity)
                         asite_activities = asite_activity if isinstance(asite_activity, list) else [asite_activity]
 
@@ -1889,15 +1893,29 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
 
                         # Get COS data (Completed Work count)
                         completed_flats = 0
-                        if block in activity_counts:
-                            ai_data = activity_counts[block]
-                            if isinstance(ai_data, list):
-                                for category_data in ai_data:
-                                    if isinstance(category_data, dict) and 'Activities' in category_data:
-                                        for activity_data in category_data['Activities']:
-                                            if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
-                                                completed_flats = activity_data.get('Total', 0)
-                                                break
+                        
+                        # **NEW: Only get COS data for Slab conduting in specific sheets**
+                        if activity == "Slab conduting" and stage_name in ["1st Floor Slab", "2nd Floor Roof Slab"]:
+                            if block in activity_counts:
+                                ai_data = activity_counts[block]
+                                if isinstance(ai_data, list):
+                                    for category_data in ai_data:
+                                        if isinstance(category_data, dict) and 'Activities' in category_data:
+                                            for activity_data in category_data['Activities']:
+                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
+                                                    completed_flats = activity_data.get('Total', 0)
+                                                    break
+                        elif activity != "Slab conduting":
+                            # For all other activities, get COS data normally
+                            if block in activity_counts:
+                                ai_data = activity_counts[block]
+                                if isinstance(ai_data, list):
+                                    for category_data in ai_data:
+                                        if isinstance(category_data, dict) and 'Activities' in category_data:
+                                            for activity_data in category_data['Activities']:
+                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
+                                                    completed_flats = activity_data.get('Total', 0)
+                                                    break
 
                         # Calculate open/missing
                         in_progress = 0
@@ -1965,11 +1983,13 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             for col in range(col_start, col_pos):
                 worksheet.set_column(col, col, 20)
 
-        # Create Summary Sheet: "Checklist June"
-        worksheet_summary = workbook.add_worksheet("Checklist June")
+        # **NEW: Create Summary Sheet with dynamic month name**
+        current_month = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%B')  # Full month name (e.g., "January")
+        summary_sheet_name = f"Checklist {current_month}"
+        worksheet_summary = workbook.add_worksheet(summary_sheet_name)
         current_row = 0
 
-        worksheet_summary.write(current_row, 0, "Checklist: June", header_format)
+        worksheet_summary.write(current_row, 0, f"Checklist: {current_month}", header_format)
         current_row += 1
 
         summary_headers = [
@@ -2002,6 +2022,10 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             for block in blocks:
                 for category, activities in categories.items():
                     for activity in activities:
+                        # **NEW: Skip Slab conduting for summary except for specific stages**
+                        if activity == "Slab conduting" and stage_name not in ["1st Floor Slab", "2nd Floor Roof Slab"]:
+                            continue
+                            
                         asite_activity = cos_to_asite_mapping.get(activity, activity)
                         asite_activities = asite_activity if isinstance(asite_activity, list) else [asite_activity]
                         
@@ -2028,15 +2052,28 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                         
                         # Get COS data
                         completed_flats = 0
-                        if block in activity_counts:
-                            ai_data = activity_counts[block]
-                            if isinstance(ai_data, list):
-                                for category_data in ai_data:
-                                    if isinstance(category_data, dict) and 'Activities' in category_data:
-                                        for activity_data in category_data['Activities']:
-                                            if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
-                                                completed_flats = activity_data.get('Total', 0)
-                                                break
+                        
+                        # **NEW: Only get COS data for Slab conduting in specific stages**
+                        if activity == "Slab conduting" and stage_name in ["1st Floor Slab", "2nd Floor Roof Slab"]:
+                            if block in activity_counts:
+                                ai_data = activity_counts[block]
+                                if isinstance(ai_data, list):
+                                    for category_data in ai_data:
+                                        if isinstance(category_data, dict) and 'Activities' in category_data:
+                                            for activity_data in category_data['Activities']:
+                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
+                                                    completed_flats = activity_data.get('Total', 0)
+                                                    break
+                        elif activity != "Slab conduting":
+                            if block in activity_counts:
+                                ai_data = activity_counts[block]
+                                if isinstance(ai_data, list):
+                                    for category_data in ai_data:
+                                        if isinstance(category_data, dict) and 'Activities' in category_data:
+                                            for activity_data in category_data['Activities']:
+                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
+                                                    completed_flats = activity_data.get('Total', 0)
+                                                    break
                         
                         # Calculate open/missing
                         if completed_flats > 0 and closed_checklist <= completed_flats:
@@ -2193,3 +2230,4 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
+
