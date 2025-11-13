@@ -2493,6 +2493,12 @@
 
 
 
+
+
+
+
+
+
 import streamlit as st
 import requests
 import json
@@ -4697,19 +4703,18 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         for col in range(12):
             worksheet.set_column(col, col, 18)
 
-        # Create Sheet 2: Checklist June
+        # Create Sheet 2: Checklist with dynamic month name
+        current_month = datetime.now().strftime("%B")  # Gets full month name (e.g., "November")
         worksheet2 = workbook.add_worksheet(f"Checklist {current_month}")
-
         current_row = 0
 
         worksheet2.write(current_row, 0, f"Checklist: {current_month}", header_format)
-
-        current_row += 1
 
         headers = [
             "Site",
             "Total of Missing & Open Checklist-Civil",
             "Total of Missing & Open Checklist-MEP",
+            "Total of Missing & Open Checklist-Interior Finishing",
             "TOTAL"
         ]
         for col, header in enumerate(headers, start=0):
@@ -4717,10 +4722,12 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         current_row += 1
 
         def map_category_to_type(category):
-            if category in ["Civil Works", "Interior Finishing Works", "External Development Activities"]:
+            if category in ["Civil Works", "External Development Activities"]:
                 return "Civil"
             elif category in ["MEP Works"]:
                 return "MEP"
+            elif category in ["Interior Finishing Works"]:
+                return "Interior"
             else:
                 return "Civil"
 
@@ -4744,7 +4751,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             type_ = map_category_to_type(category)
             
             if site_name not in summary_data:
-                summary_data[site_name] = {"Civil": 0, "MEP": 0}
+                summary_data[site_name] = {"Civil": 0, "MEP": 0, "Interior": 0}
             
             summary_data[site_name][type_] += open_missing
 
@@ -4753,23 +4760,36 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         for site_name, counts in sorted(summary_data.items()):
             civil_count = counts["Civil"]
             mep_count = counts["MEP"]
-            total_count = civil_count + mep_count
+            interior_count = counts["Interior"]
+            total_count = civil_count + mep_count + interior_count
             
             worksheet2.write(current_row, 0, site_name, cell_format)
             worksheet2.write(current_row, 1, civil_count, cell_format)
             worksheet2.write(current_row, 2, mep_count, cell_format)
-            worksheet2.write(current_row, 3, total_count, cell_format)
+            worksheet2.write(current_row, 3, interior_count, cell_format)
+            worksheet2.write(current_row, 4, total_count, cell_format)
             
             current_row += 1
 
-        for col in range(4):
+        for col in range(5):
             max_length = 0
             for row in range(current_row):
                 try:
                     if col == 0:
-                        cell_value = sorted(summary_data.keys())[row-2] if row >= 2 else headers[col]
+                        cell_value = sorted(summary_data.keys())[row-1] if row >= 1 else headers[col]
                     else:
-                        cell_value = str(list(summary_data.values())[row-2].get("Civil" if col == 1 else "MEP" if col == 2 else "total", 0)) if row >= 2 else headers[col]
+                        if row == 0:
+                            cell_value = headers[col]
+                        elif row >= 1:
+                            site_data = list(summary_data.values())[row-1]
+                            if col == 1:
+                                cell_value = str(site_data.get("Civil", 0))
+                            elif col == 2:
+                                cell_value = str(site_data.get("MEP", 0))
+                            elif col == 3:
+                                cell_value = str(site_data.get("Interior", 0))
+                            elif col == 4:
+                                cell_value = str(site_data.get("Civil", 0) + site_data.get("MEP", 0) + site_data.get("Interior", 0))
                     if len(cell_value) > max_length:
                         max_length = len(cell_value)
                 except:
@@ -4917,12 +4937,3 @@ if st.sidebar.button("Analyze and Display Activity Counts"):
 st.sidebar.title("📊 Slab Cycle")
 st.session_state.ignore_year = datetime.now().year
 st.session_state.ignore_month = datetime.now().month
-
-
-
-
-
-
-
-
-
