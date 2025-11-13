@@ -1,4 +1,3 @@
-
 import streamlit as st
 import requests
 import json
@@ -1996,6 +1995,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             "Site",
             "Total of Missing & Open Checklist-Civil",
             "Total of Missing & Open Checklist-MEP",
+            "Total of Missing & Open Checklist-Interior Finishing",
             "TOTAL"
         ]
         for col, header in enumerate(summary_headers, start=0):
@@ -2003,10 +2003,12 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         current_row += 1
 
         def map_category_to_type(category):
-            if category in ["Civil Works", "Interior Finishing Works"]:
+            if category in ["Civil Works"]:
                 return "Civil"
             elif category in ["MEP Works"]:
                 return "MEP"
+            elif category in ["Interior Finishing Works"]:
+                return "Interior"
             else:
                 return "Civil"
 
@@ -2096,7 +2098,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                         type_ = map_category_to_type(category)
                         
                         if site_name not in summary_data:
-                            summary_data[site_name] = {"Civil": 0, "MEP": 0}
+                            summary_data[site_name] = {"Civil": 0, "MEP": 0, "Interior": 0}
                         
                         summary_data[site_name][type_] += open_missing
 
@@ -2104,16 +2106,18 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         for site_name, counts in sorted(summary_data.items()):
             civil_count = counts["Civil"]
             mep_count = counts["MEP"]
-            total_count = civil_count + mep_count
+            interior_count = counts["Interior"]
+            total_count = civil_count + mep_count + interior_count
             
             worksheet_summary.write(current_row, 0, site_name, cell_format)
             worksheet_summary.write(current_row, 1, civil_count, cell_format)
             worksheet_summary.write(current_row, 2, mep_count, cell_format)
-            worksheet_summary.write(current_row, 3, total_count, cell_format)
+            worksheet_summary.write(current_row, 3, interior_count, cell_format)
+            worksheet_summary.write(current_row, 4, total_count, cell_format)
             current_row += 1
 
         # Auto-adjust column widths
-        for col in range(4):
+        for col in range(5):
             worksheet_summary.set_column(col, col, 25)
 
         workbook.close()
@@ -2230,4 +2234,3 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
-
