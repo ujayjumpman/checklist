@@ -2024,6 +2024,11 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                             "Closed checklist": closed_checklist,
                             "Open/Missing check list": open_missing
                         })
+            
+            # Store consolidated_rows in session state for summary calculation
+            if 'all_consolidated_rows' not in st.session_state:
+                st.session_state.all_consolidated_rows = {}
+            st.session_state.all_consolidated_rows[stage_name] = consolidated_rows.copy()
 
             # Write to worksheet
             df = pd.DataFrame(consolidated_rows)
@@ -2104,135 +2109,38 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
 
         summary_data = {}
         
-        # Aggregate data from all stages
+        # Store all consolidated rows from sheet generation to use in summary
+        if 'all_consolidated_rows' not in st.session_state:
+            st.session_state.all_consolidated_rows = {}
+        
+        # Aggregate data from the already-calculated consolidated rows
         for stage_name in STRUCTURAL_STAGES.keys():
-            stage_analysis = st.session_state.stage_analysis.get(stage_name, pd.DataFrame())
-            
-            if stage_analysis.empty:
-                continue
-            
-            # Generate stage-specific activity counts (same as in sheet generation)
-            stage_activity_counts = {}
-            try:
-                key_activities = STRUCTURAL_STAGES[stage_name]
+            if stage_name in st.session_state.all_consolidated_rows:
+                stage_rows = st.session_state.all_consolidated_rows[stage_name]
                 
-                for block in blocks:
-                    if block in activity_counts:
-                        df_list = activity_counts[block]
-                        
-                        if isinstance(df_list, list):
-                            combined_df = pd.DataFrame()
-                            for item in df_list:
-                                if isinstance(item, dict) and 'Activities' in item:
-                                    activities_df = pd.DataFrame(item['Activities'])
-                                    combined_df = pd.concat([combined_df, activities_df], ignore_index=True)
-                            
-                            if not combined_df.empty:
-                                df = combined_df
-                            else:
-                                continue
-                        else:
-                            continue
-                        
-                        clean_name = block.strip()
-                        if clean_name == "B1 Banket Hall & Finedine ":
-                            clean_name = "B1 Banket Hall & Finedine"
-                        
-                        key_activity_count = 0
-                        
-                        for idx, row in df.iterrows():
-                            activity_name = str(row['Activity Name']).lower().strip()
-                            
-                            for key_activity in key_activities:
-                                if key_activity.lower() in activity_name:
-                                    key_activity_count += 1
-                                    break
-                        
-                        block_activity_counts = {
-                            'Concreting': key_activity_count,
-                            'Shuttering': key_activity_count,
-                            'Reinforcement': key_activity_count,
-                            'De-Shuttering': key_activity_count,
-                            'Slab conduting': key_activity_count
-                        }
-                        
-                        stage_activity_counts[clean_name] = block_activity_counts
-            except Exception as e:
-                logger.error(f"Error generating block-specific counts for summary {stage_name}: {str(e)}")
-                stage_activity_counts = activity_counts
-                
-            for block in blocks:
-                for category, activities in categories.items():
-                    for activity in activities:
-                        # **NEW: Skip Slab conduting for summary except for specific stages**
-                        if activity == "Slab conduting" and stage_name not in ["1st Floor Slab", "2nd Floor Roof Slab"]:
-                            continue
-                            
-                        asite_activity = cos_to_asite_mapping.get(activity, activity)
-                        asite_activities = asite_activity if isinstance(asite_activity, list) else [asite_activity]
-                        
-                        closed_checklist = 0
-                        asite_filters = block_to_asite_filter.get(block, block)
-                        
-                        if isinstance(asite_filters, list):
-                            for asite_filter in asite_filters:
-                                for asite_act in asite_activities:
-                                    matching_rows = stage_analysis[
-                                        (stage_analysis['tower_name'].str.strip() == asite_filter.strip()) &
-                                        (stage_analysis['activityName'] == asite_act)
-                                    ]
-                                    if not matching_rows.empty:
-                                        closed_checklist += matching_rows['CompletedCount'].sum()
-                        else:
-                            for asite_act in asite_activities:
-                                matching_rows = stage_analysis[
-                                    (stage_analysis['tower_name'].str.strip() == asite_filters.strip()) &
-                                    (stage_analysis['activityName'] == asite_act)
-                                ]
-                                if not matching_rows.empty:
-                                    closed_checklist += matching_rows['CompletedCount'].sum()
-                        
-                        # Get COS data for completed flats from stage-specific counts
-                        completed_flats = 0
-                        
-                        # **NEW: Only get COS data for Slab conduting in specific stages**
-                        if activity == "Slab conduting" and stage_name in ["1st Floor Slab", "2nd Floor Roof Slab"]:
-                            if block in stage_activity_counts:
-                                activity_data_dict = stage_activity_counts[block]
-                                if isinstance(activity_data_dict, dict):
-                                    completed_flats = activity_data_dict.get(activity, 0)
-                        elif activity != "Slab conduting":
-                            # For all other activities, get COS data from stage-specific counts
-                            if block in stage_activity_counts:
-                                activity_data_dict = stage_activity_counts[block]
-                                if isinstance(activity_data_dict, dict):
-                                    completed_flats = activity_data_dict.get(activity, 0)
-                        
-                        # Calculate open/missing using the SAME logic as in sheet generation
-                        in_progress = 0
-                        if completed_flats == 0 or closed_checklist > completed_flats:
-                            open_missing = 0
-                        else:
-                            open_missing = abs(completed_flats - closed_checklist)
-                        
-                        # Convert block name to display format
-                        if block == "B1 Banket Hall & Finedine":
-                            site_name = "WaveCityClub-Block 01 Banket Hall & Finedine"
-                        elif "&" in block:
-                            block_num = block.replace(" & ", "&")
-                            site_name = f"WaveCityClub-Block {block_num}"
-                        else:
-                            block_num = block[1:]
-                            if len(block_num) == 1:
-                                block_num = f"0{block_num}"
-                            site_name = f"WaveCityClub-Block {block_num}"
-                        
-                        type_ = map_category_to_type(category)
-                        
-                        if site_name not in summary_data:
-                            summary_data[site_name] = {"Civil": 0, "MEP": 0, "Interior": 0}
-                        
-                        summary_data[site_name][type_] += open_missing
+                for row in stage_rows:
+                    block = row['Block']
+                    category = row['Category']
+                    open_missing = row['Open/Missing check list']
+                    
+                    # Convert block name to display format
+                    if block == "B1 Banket Hall & Finedine":
+                        site_name = "WaveCityClub-Block 01 Banket Hall & Finedine"
+                    elif "&" in block:
+                        block_num = block.replace(" & ", "&")
+                        site_name = f"WaveCityClub-Block {block_num}"
+                    else:
+                        block_num = block[1:]
+                        if len(block_num) == 1:
+                            block_num = f"0{block_num}"
+                        site_name = f"WaveCityClub-Block {block_num}"
+                    
+                    type_ = map_category_to_type(category)
+                    
+                    if site_name not in summary_data:
+                        summary_data[site_name] = {"Civil": 0, "MEP": 0, "Interior": 0}
+                    
+                    summary_data[site_name][type_] += open_missing
 
         # Write summary data
         for site_name, counts in sorted(summary_data.items()):
@@ -4728,5 +4636,6 @@ if st.sidebar.button("Analyze and Display Activity Counts"):
 # if st.sidebar.button("Analyze and Display Activity Counts"):
 #     with st.spinner("Running analysis and displaying activity counts..."):
 #         run_analysis_and_display()
+
 
 
