@@ -2110,6 +2110,56 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
             
             if stage_analysis.empty:
                 continue
+            
+            # Generate stage-specific activity counts (same as in sheet generation)
+            stage_activity_counts = {}
+            try:
+                key_activities = STRUCTURAL_STAGES[stage_name]
+                
+                for block in blocks:
+                    if block in activity_counts:
+                        df_list = activity_counts[block]
+                        
+                        if isinstance(df_list, list):
+                            combined_df = pd.DataFrame()
+                            for item in df_list:
+                                if isinstance(item, dict) and 'Activities' in item:
+                                    activities_df = pd.DataFrame(item['Activities'])
+                                    combined_df = pd.concat([combined_df, activities_df], ignore_index=True)
+                            
+                            if not combined_df.empty:
+                                df = combined_df
+                            else:
+                                continue
+                        else:
+                            continue
+                        
+                        clean_name = block.strip()
+                        if clean_name == "B1 Banket Hall & Finedine ":
+                            clean_name = "B1 Banket Hall & Finedine"
+                        
+                        key_activity_count = 0
+                        
+                        for idx, row in df.iterrows():
+                            activity_name = str(row['Activity Name']).lower().strip()
+                            
+                            for key_activity in key_activities:
+                                if key_activity.lower() in activity_name:
+                                    key_activity_count += 1
+                                    break
+                        
+                        block_activity_counts = {
+                            'Concreting': key_activity_count,
+                            'Shuttering': key_activity_count,
+                            'Reinforcement': key_activity_count,
+                            'De-Shuttering': key_activity_count,
+                            'Slab conduting': key_activity_count
+                        }
+                        
+                        stage_activity_counts[clean_name] = block_activity_counts
+            except Exception as e:
+                logger.error(f"Error generating block-specific counts for summary {stage_name}: {str(e)}")
+                stage_activity_counts = activity_counts
                 
             for block in blocks:
                 for category, activities in categories.items():
@@ -2142,35 +2192,28 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                                 if not matching_rows.empty:
                                     closed_checklist += matching_rows['CompletedCount'].sum()
                         
-                        # Get COS data
+                        # Get COS data for completed flats from stage-specific counts
                         completed_flats = 0
                         
                         # **NEW: Only get COS data for Slab conduting in specific stages**
                         if activity == "Slab conduting" and stage_name in ["1st Floor Slab", "2nd Floor Roof Slab"]:
-                            if block in activity_counts:
-                                ai_data = activity_counts[block]
-                                if isinstance(ai_data, list):
-                                    for category_data in ai_data:
-                                        if isinstance(category_data, dict) and 'Activities' in category_data:
-                                            for activity_data in category_data['Activities']:
-                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
-                                                    completed_flats = activity_data.get('Total', 0)
-                                                    break
+                            if block in stage_activity_counts:
+                                activity_data_dict = stage_activity_counts[block]
+                                if isinstance(activity_data_dict, dict):
+                                    completed_flats = activity_data_dict.get(activity, 0)
                         elif activity != "Slab conduting":
-                            if block in activity_counts:
-                                ai_data = activity_counts[block]
-                                if isinstance(ai_data, list):
-                                    for category_data in ai_data:
-                                        if isinstance(category_data, dict) and 'Activities' in category_data:
-                                            for activity_data in category_data['Activities']:
-                                                if isinstance(activity_data, dict) and activity_data.get('Activity Name') == activity:
-                                                    completed_flats = activity_data.get('Total', 0)
-                                                    break
+                            # For all other activities, get COS data from stage-specific counts
+                            if block in stage_activity_counts:
+                                activity_data_dict = stage_activity_counts[block]
+                                if isinstance(activity_data_dict, dict):
+                                    completed_flats = activity_data_dict.get(activity, 0)
                         
-                        # Calculate open/missing
-                        # The open/missing count is directly from the closed_checklist value
-                        # as shown in column E of the stage sheets
-                        open_missing = closed_checklist if closed_checklist > 0 else 0
+                        # Calculate open/missing using the SAME logic as in sheet generation
+                        in_progress = 0
+                        if completed_flats == 0 or closed_checklist > completed_flats:
+                            open_missing = 0
+                        else:
+                            open_missing = abs(completed_flats - closed_checklist)
                         
                         # Convert block name to display format
                         if block == "B1 Banket Hall & Finedine":
@@ -4685,4 +4728,5 @@ if st.sidebar.button("Analyze and Display Activity Counts"):
 # if st.sidebar.button("Analyze and Display Activity Counts"):
 #     with st.spinner("Running analysis and displaying activity counts..."):
 #         run_analysis_and_display()
+
 
