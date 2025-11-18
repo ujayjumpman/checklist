@@ -1,3 +1,4 @@
+#correct code as of now
 # import streamlit as st
 # import requests
 # import json
@@ -632,7 +633,7 @@
 #         """Check if path contains structural work elements"""
 #         structural_keywords = [
 #             'footing', 'plinth beam', 'slab', 'shear wall', 'column', 
-#             'beam', 'roof', 'floor', 'staircase', 'lift', 'water tank'
+#             'beam', 'roof', 'floor', 'staircase', 'lift', 'water tank', 'terrace'
 #         ]
 #         path_lower = full_path.lower()
 #         return any(keyword in path_lower for keyword in structural_keywords)
@@ -2304,9 +2305,6 @@
 
 
 
-
-
-
 import streamlit as st
 import requests
 import json
@@ -2964,11 +2962,17 @@ def process_data(df, activity_df, location_df, dataset_name, stage_name=None):
         """Extract block name from the path"""
         parts = full_path.split('/')
         
-        if len(parts) < 2:
-            logger.warning(f"Unexpected path format: {full_path}")
-            return "Unknown"
+        if len(parts) < 3:
+            logger.warning(f"Unexpected path format (less than 3 parts): {full_path}")
+            # Fallback: try to find a part that looks like a block
+            for part in parts:
+                if 'block' in part.lower():
+                    return part.strip()
+            return parts[1].strip() if len(parts) > 1 else "Unknown"
         
-        block_part = parts[1].strip() if len(parts) > 1 else "Unknown"
+        # Typically: Quality/Wave city club structure/08. Block 08 (B8) Squash Court/...
+        # We want parts[2] which is the block name
+        block_part = parts[2].strip()
         logger.info(f"Extracting tower from path: {full_path} -> block_part: {block_part}")
         
         return block_part
@@ -4203,7 +4207,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                 "1st Floor Slab": ["gf roof slab casting", "ground floor roof slab casting"],
                 "1st Floor Shear Wall and Column": ["ff column casting", "first floor column casting"],
                 "2nd Floor Roof Slab": ["ff roof slab casting", "first floor roof slab casting", "2nd floor roof slab casting"],
-                "Terrace Work": ["terrace work", "terrace"]
+                "Terrace Work": ["terrace", "roof", "parapet", "waterproofing", "mumty", "railing"]
             }
             
             key_activities = stage_to_key_activity.get(stage_name, ["foundation concreting"])
