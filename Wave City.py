@@ -2298,6 +2298,7 @@
 
 
 #correct code as of now
+#correct code as of now
 import streamlit as st
 import requests
 import json
@@ -4139,10 +4140,7 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         }
 
         block_to_asite_filter = {
-            "B1 Banket Hall & Finedine": [
-                "01. Block (B1) Banquet Hall ",
-                "02. Block (B1) Fine Dine"
-            ],
+            "B1 Banket Hall & Finedine": "01. Block (B1) Banquet Hall ",
             "B2 & B3": [
                 "03. Block 02 (B2) Changing room ",
                 "04. Block 03 (B3) GYM "
@@ -4218,25 +4216,6 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                             if clean_name == "B1 Banket Hall & Finedine ":
                                 clean_name = "B1 Banket Hall & Finedine"
                             
-                            # ========== FIX: Check if 'Closed checklist' column exists ==========
-                            if 'Closed checklist' not in df.columns:
-                                logger.error(f"'Closed checklist' column not found in sheet {clean_name}")
-                                logger.info(f"Available columns: {df.columns.tolist()}")
-                                # Try alternative column names
-                                status_column = None
-                                for col in df.columns:
-                                    col_lower = str(col).lower().strip()
-                                    if 'closed' in col_lower or 'status' in col_lower or 'complete' in col_lower:
-                                        status_column = col
-                                        logger.info(f"Using alternative status column: {col}")
-                                        break
-                                if not status_column:
-                                    logger.warning(f"No status column found for {clean_name}, skipping completion check")
-                                    status_column = 'Closed checklist'  # fallback
-                            else:
-                                status_column = 'Closed checklist'
-                            # ===================================================================
-                            
                             # Count the key activity for THIS SPECIFIC BLOCK ONLY
                             key_activity_count = 0
                             found_activities = []
@@ -4244,31 +4223,12 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                             for idx, row in df.iterrows():
                                 activity_name = str(row['Activity Name']).lower().strip()
                                 
-                                # ========== FIX: Check completion status before counting ==========
-                                # Only count if the activity is COMPLETED (Closed checklist > 0)
-                                is_completed = False
-                                if status_column in df.columns:
-                                    closed_count = row.get(status_column, 0)
-                                    # Check if closed_count is a valid number and > 0
-                                    try:
-                                        if pd.notna(closed_count) and float(closed_count) > 0:
-                                            is_completed = True
-                                    except (ValueError, TypeError):
-                                        logger.warning(f"Invalid closed_count value for {activity_name}: {closed_count}")
-                                        is_completed = False
-                                # ===================================================================
-                                
                                 # Check if this row matches any of the key activities for this stage
                                 for key_activity in key_activities:
                                     if key_activity.lower() in activity_name:
-                                        # ========== FIX: Only count if completed ==========
-                                        if is_completed:
-                                            key_activity_count += 1
-                                            found_activities.append(row['Activity Name'])
-                                            logger.info(f"Stage {stage_name}, Block {clean_name}: Found COMPLETED '{row['Activity Name']}' (Closed: {closed_count})")
-                                        else:
-                                            logger.info(f"Stage {stage_name}, Block {clean_name}: Skipping IN PROGRESS '{row['Activity Name']}' (Closed: {closed_count})")
-                                        # ==================================================
+                                        key_activity_count += 1
+                                        found_activities.append(row['Activity Name'])
+                                        logger.info(f"Stage {stage_name}, Block {clean_name}: Found '{row['Activity Name']}'")
                                         break
                             
                             # Store count for this block - all Civil Works activities get this count
@@ -4281,8 +4241,8 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                             }
                             
                             stage_activity_counts[clean_name] = block_activity_counts
-                            logger.info(f"Stage {stage_name}, Block {clean_name}: Key activity count = {key_activity_count} (found {len(found_activities)} COMPLETED activities)")
-
+                            logger.info(f"Stage {stage_name}, Block {clean_name}: Key activity count = {key_activity_count} (found {len(found_activities)} activities)")
+                
                 logger.info(f"Generated block-specific activity counts for {stage_name}: {stage_activity_counts}")
             except Exception as e:
                 logger.error(f"Error generating block-specific counts for {stage_name}: {str(e)}")
@@ -4612,8 +4572,6 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
-
-
 
 
 
