@@ -1,4 +1,4 @@
-correct code as of now
+#correct code as of now
 import streamlit as st
 import requests
 import json
@@ -2275,6 +2275,7 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
+
 
 
 
