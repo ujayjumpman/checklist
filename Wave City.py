@@ -32,7 +32,7 @@ STRUCTURAL_STAGES = {
     "1st Floor Slab": ["1st floor slab", "first floor slab"],
     "1st Floor Shear Wall and Column": ["1st floor shear wall", "1st floor column"],
     "2nd Floor Roof Slab": ["2nd floor", "roof slab", "second floor"],
-    "Terrace Work": ["terrace", "roof"]
+    "Terrace Work": ["terrace", "work"]
 }
 
 STAGE_EXCLUSIONS = {
@@ -2275,6 +2275,7 @@ st.sidebar.title("📊 Status Analysis")
 if st.sidebar.button("Analyze and Display Activity Counts"):
     with st.spinner("Running analysis and displaying activity counts..."):
         run_analysis_and_display()
+
 
 
 
