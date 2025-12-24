@@ -4126,6 +4126,10 @@ def generate_consolidated_Checklist_excel(combined_data):
     COMPLETELY FIXED: Proper tower normalization + Plumbing Works calculation
     """
     try:
+        # Get current month name dynamically
+        current_month = datetime.now().strftime("%B")
+        logger.info(f"Generating report for: {current_month}")
+        
         st.write("## 🔧 Generating Consolidated Checklist (Fixed Tower Mapping)")
         
         # ========== TOWER NAME NORMALIZATION (IMPROVED) ==========
@@ -4380,7 +4384,11 @@ def generate_consolidated_Checklist_excel(combined_data):
                 for activity_name in activities:
                     cos_total = cos_data_dict.get((tower, activity_name), 0)
                     asite_total = asite_data_dict.get((tower, activity_name), 0)
-                    open_missing = abs(cos_total - asite_total)
+                    # FIXED OPEN CHECKLIST LOGIC
+                    if asite_total > cos_total:
+                        open_missing = 0  # Closed checklist > completed work = 0
+                    else:
+                        open_missing = cos_total - asite_total  # Completed work - closed checklist
                     
                     consolidated_rows.append({
                         "Tower": tower,
@@ -4408,7 +4416,12 @@ def generate_consolidated_Checklist_excel(combined_data):
                 if row['Activity Name'] in ['Shuttering', 'Reinforcement', 'De-Shuttering']:
                     concreting_count = concreting_by_tower[row['Tower']]
                     row['Completed Work*(Count of Flat)'] = concreting_count
-                    row['Open/Missing check list'] = abs(concreting_count - row['Closed checklist against completed work'])
+                    # FIXED OPEN CHECKLIST LOGIC
+                    closed_count = row["Closed checklist against completed work"]
+                    if closed_count > concreting_count:
+                        row["Open/Missing check list"] = 0
+                    else:
+                        row["Open/Missing check list"] = concreting_count - closed_count
                     st.write(f"  Mapped {row['Tower']} {row['Activity Name']} = {concreting_count}")
 
         # Sync Slab Conducting
@@ -4417,7 +4430,12 @@ def generate_consolidated_Checklist_excel(combined_data):
             if row['Activity Name'] == 'Slab Conducting' and row['Tower'] in concreting_by_tower:
                 concreting_count = concreting_by_tower[row['Tower']]
                 row['Completed Work*(Count of Flat)'] = concreting_count
-                row['Open/Missing check list'] = abs(concreting_count - row['Closed checklist against completed work'])
+                # FIXED OPEN CHECKLIST LOGIC
+                closed_count = row["Closed checklist against completed work"]
+                if closed_count > concreting_count:
+                    row["Open/Missing check list"] = 0
+                else:
+                    row["Open/Missing check list"] = concreting_count - closed_count
                 st.write(f"  Synced {row['Tower']} Slab Conducting = {concreting_count}")
         consolidated_rows = apply_tower_f_hardcoded_fixes(consolidated_rows)
         # ========== CREATE EXCEL ==========
@@ -4470,7 +4488,7 @@ def generate_consolidated_Checklist_excel(combined_data):
                 if cat_group.empty:
                     continue
                     
-                worksheet.cell(row=current_row, column=1).value = f"May Checklist Status - {category}"
+                worksheet.cell(row=current_row, column=1).value = f"{current_month} Checklist Status - {category}"
                 worksheet.cell(row=current_row, column=1).font = category_font
                 current_row += 1
 
@@ -4529,10 +4547,97 @@ def generate_consolidated_Checklist_excel(combined_data):
                     pass
             worksheet.column_dimensions[column].width = min(max_length + 2, 50)
 
+
+        # ========== FIX #3: SHEET 2 - CONSOLIDATED SUMMARY ==========
+        worksheet2 = workbook.create_sheet(title=f"Checklist {current_month}")
+        current_row = 1
+
+        worksheet2.cell(row=current_row, column=1).value = f"Checklist: {current_month}"
+        worksheet2.cell(row=current_row, column=1).font = header_font
+        current_row += 1
+
+        headers = [
+            "Site",
+            "Total of Missing & Open Checklist-Civil Works",
+            "Total of Missing & Open Checklist-MEP Works",
+            "Total of Missing & Open Checklist-Interior Finishing Works",
+            "TOTAL"
+        ]
+        for col, header in enumerate(headers, start=1):
+            cell = worksheet2.cell(row=current_row, column=col)
+            cell.value = header
+            cell.font = header_font
+            cell.border = border
+            cell.alignment = center_alignment
+        current_row += 1
+
+        # Build summary data
+        summary_data = {}
+        
+        for _, row in df.iterrows():
+            tower = row["Tower"]
+            category = row["Category"]
+            open_missing = row["Open/Missing check list"]
+
+            if open_missing == 0:
+                continue
+
+            # Create site name (e.g., "Eligo-TF", "Eligo-TG", "Eligo-TH")
+            site_name = f"Eligo-{tower}"
+
+            if site_name not in summary_data:
+                summary_data[site_name] = {
+                    "Civil Works": 0,
+                    "MEP Works": 0,
+                    "Interior Finishing Works": 0
+                }
+
+            if category in summary_data[site_name]:
+                summary_data[site_name][category] += open_missing
+
+        # Write summary data to Sheet 2
+        if not summary_data:
+            logger.warning("No summary data found for Sheet 2")
+            worksheet2.cell(row=current_row, column=1).value = "No data available"
+            for col in range(2, 6):
+                worksheet2.cell(row=current_row, column=col).value = 0
+        else:
+            for site_name, counts in sorted(summary_data.items()):
+                civil_count = counts["Civil Works"]
+                mep_count = counts["MEP Works"]
+                interior_count = counts["Interior Finishing Works"]
+                total_count = civil_count + mep_count + interior_count
+
+                if total_count > 0:
+                    worksheet2.cell(row=current_row, column=1).value = site_name
+                    worksheet2.cell(row=current_row, column=2).value = civil_count
+                    worksheet2.cell(row=current_row, column=3).value = mep_count
+                    worksheet2.cell(row=current_row, column=4).value = interior_count
+                    worksheet2.cell(row=current_row, column=5).value = total_count
+
+                    for col in range(1, 6):
+                        cell = worksheet2.cell(row=current_row, column=col)
+                        cell.border = border
+                        cell.alignment = center_alignment
+                    current_row += 1
+
+        # Adjust column widths for Sheet 2
+        for col in worksheet2.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            worksheet2.column_dimensions[column].width = adjusted_width
+
         workbook.save(output)
         output.seek(0)
 
-        st.success("✅ Excel file generated successfully!")
+        st.success("✅ Excel file generated successfully with 2 sheets!")
         return output
 
     except Exception as e:
