@@ -4479,7 +4479,9 @@ def generate_consolidated_Checklist_excel(combined_data):
         for tower in sorted(all_towers):
             tower_group = df[df['Tower'] == tower]
             
-            worksheet.cell(row=current_row, column=1).value = tower
+            # Display full tower name
+            tower_display = f"Tower {tower[1]}" if tower.startswith("T") else tower
+            worksheet.cell(row=current_row, column=1).value = tower_display
             worksheet.cell(row=current_row, column=1).font = header_font
             current_row += 1
 
@@ -4526,9 +4528,12 @@ def generate_consolidated_Checklist_excel(combined_data):
 
                 total_open = cat_group["Open/Missing check list"].sum()
                 worksheet.cell(row=current_row, column=1).value = "TOTAL pending checklist"
-                worksheet.cell(row=current_row, column=4).value = total_open
+                worksheet.cell(row=current_row, column=2).value = ""
+                worksheet.cell(row=current_row, column=3).value = ""
+                worksheet.cell(row=current_row, column=4).value = ""
+                worksheet.cell(row=current_row, column=5).value = total_open
                 
-                for col in range(1, 5):
+                for col in range(1, 6):
                     cell = worksheet.cell(row=current_row, column=col)
                     cell.font = category_font
                     cell.border = border
@@ -4583,7 +4588,7 @@ def generate_consolidated_Checklist_excel(combined_data):
                 continue
 
             # Create site name (e.g., "Eligo-TF", "Eligo-TG", "Eligo-TH")
-            site_name = f"Eligo-{tower}"
+            site_name = f"Eligo-Tower {tower[1]}" if tower.startswith("T") else f"Eligo-{tower}"
 
             if site_name not in summary_data:
                 summary_data[site_name] = {
