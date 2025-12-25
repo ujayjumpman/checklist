@@ -4027,19 +4027,27 @@ def debug_asite_data_flow(ai_data):
 
 def apply_tower_f_hardcoded_fixes(consolidated_rows):
     """
-    Apply hardcoded count corrections ONLY for Tower F's COS data.
+    Apply hardcoded count corrections for Tower F, G, and H COS data.
     This function is completely standalone and does not affect any other logic.
     
     WHAT IT DOES:
-    - Finds Tower F rows in the consolidated data
+    - Finds Tower F, G, and H rows in the consolidated data
     - Overrides ONLY the COS counts (Completed Work column) for specific activities
     - Leaves Asite data completely untouched
     - Recalculates the gap based on corrected COS vs unchanged Asite
     
     CORRECTIONS APPLIED:
+    
+    Tower F:
     - POP & Gypsum Plaster: Force COS count to 64 (was incorrectly 117)
     - Wall Conduting: Force COS count to 0 (was incorrectly 1)
     - Wiring & Switch Socket: Force COS count to 0 (was incorrectly 2)
+    
+    Tower G:
+    - Wiring & Switch Socket: Force COS count to 0
+    
+    Tower H:
+    - Wiring & Switch Socket: Force COS count to 0
     
     Args:
         consolidated_rows: List of dictionaries with activity data
@@ -4049,7 +4057,7 @@ def apply_tower_f_hardcoded_fixes(consolidated_rows):
                                        'Open/Missing check list'
     
     Returns:
-        List of consolidated rows with Tower F corrections applied
+        List of consolidated rows with corrections applied
         (Original list is modified in-place and also returned)
     """
     import logging
@@ -4061,28 +4069,51 @@ def apply_tower_f_hardcoded_fixes(consolidated_rows):
         logger.info("APPLYING TOWER F HARDCODED CORRECTIONS")
         logger.info("=" * 80)
         
-        # Define the exact corrections for Tower F
-        TOWER_F_CORRECTIONS = {
-            "POP & Gypsum Plaster": 64,  # Correct count (was 117 due to ceiling work being included)
-            "Wall Conduting": 0,          # Correct count (was 1 due to common area LV work)
-            "Wiring & Switch Socket": 0   # Correct count (was 2 due to common area LV work)
+        # Define the exact corrections for each tower
+        TOWER_CORRECTIONS = {
+            'TF': {
+                "POP & Gypsum Plaster": 64,  # Correct count (was 117 due to ceiling work)
+                "Wall Conduting": 0,          # Correct count (was 1 due to common area LV work)
+                "Wiring & Switch Socket": 0   # Correct count (was 2 due to common area LV work)
+            },
+            'TG': {
+                "Wiring & Switch Socket": 0   # Set to 0 for Tower G
+            },
+            'TH': {
+                "Wiring & Switch Socket": 0   # Set to 0 for Tower H
+            }
         }
         
+        # Normalize tower names to standard format (TF, TG, TH)
+        def normalize_tower(tower_name):
+            tower_str = str(tower_name).strip().upper()
+            if 'F' in tower_str:
+                return 'TF'
+            elif 'G' in tower_str:
+                return 'TG'
+            elif 'H' in tower_str:
+                return 'TH'
+            return tower_str
+        
         rows_updated = 0
+        corrections_applied = {}
         
         # Iterate through all rows
         for row in consolidated_rows:
-            # ONLY process Tower F rows
-            tower = row.get('Tower', '')
-            if tower not in ['TF', 'Tower F', 'TOWER F']:
-                continue  # Skip all other towers
+            # Get and normalize tower name
+            tower_raw = row.get('Tower', '')
+            tower_normalized = normalize_tower(tower_raw)
+            
+            # Skip if not in our correction list
+            if tower_normalized not in TOWER_CORRECTIONS:
+                continue
             
             activity_name = row.get('Activity Name', '')
             
-            # Check if this activity needs correction
-            if activity_name in TOWER_F_CORRECTIONS:
-                # Get the correct count
-                correct_cos_count = TOWER_F_CORRECTIONS[activity_name]
+            # Check if this tower + activity needs correction
+            if activity_name in TOWER_CORRECTIONS[tower_normalized]:
+                # Get the correct count for this tower
+                correct_cos_count = TOWER_CORRECTIONS[tower_normalized][activity_name]
                 
                 # Get the old COS count (before correction)
                 old_cos_count = row.get('Completed Work*(Count of Flat)', 0)
@@ -4096,8 +4127,17 @@ def apply_tower_f_hardcoded_fixes(consolidated_rows):
                 # Recalculate the gap
                 row['Open/Missing check list'] = abs(correct_cos_count - asite_count)
                 
+                # Track corrections
+                key = f"{tower_normalized} - {activity_name}"
+                corrections_applied[key] = {
+                    'old': old_cos_count,
+                    'new': correct_cos_count,
+                    'asite': asite_count,
+                    'gap': row['Open/Missing check list']
+                }
+                
                 # Log the change
-                logger.info(f"Tower F - {activity_name}:")
+                logger.info(f"{tower_normalized} - {activity_name}:")
                 logger.info(f"  COS (Before): {old_cos_count}")
                 logger.info(f"  COS (After):  {correct_cos_count} ✓")
                 logger.info(f"  Asite:        {asite_count} (unchanged)")
@@ -4105,8 +4145,10 @@ def apply_tower_f_hardcoded_fixes(consolidated_rows):
                 
                 rows_updated += 1
         
-        logger.info(f"\nTower F Corrections Summary:")
+        logger.info(f"\nHardcoded Corrections Summary:")
         logger.info(f"  Total rows updated: {rows_updated}")
+        for key, values in corrections_applied.items():
+            logger.info(f"  {key}: {values['old']} → {values['new']}")
         logger.info("=" * 80)
         
         return consolidated_rows
