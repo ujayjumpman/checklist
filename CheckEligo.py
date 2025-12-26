@@ -1383,23 +1383,23 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
                 return "Slab Conducting"
         
         # WALL CONDUCTING
-        if any(kw in name_lower for kw in ["wall conduct", "wall wiring", "cable tray", "conduit"]):
+        if any(kw in name_lower for kw in ["wall conduting"]):
             return "Wall Conduting"
         
         # PLUMBING
-        if any(kw in name_lower for kw in ["plumbing", "plumb", "up-first", "up first", "cp-first", "cp first", "up fix", "cp fix"]):
+        if any(kw in name_lower for kw in ["UP 1st Fix", "CP 1st Fix"]):
             return "Plumbing Works"
         
         # WIRING
-        if any(kw in name_lower for kw in ["el-", "el ", "el-2", "el-second", "second fix", "el-2nd", "el 2nd", "electrical", "wiring", "switch", "socket", "hvac"]):
+        if any(kw in name_lower for kw in ["EL 2nd fix","el 2nd fix"]):
             return "Wiring & Switch Socket"
         
         # POP & GYPSUM
-        if any(kw in name_lower for kw in ["pop", "gypsum", "plaster", "punning"]):
+        if any(kw in name_lower for kw in ["POP Punning (Major area)","Pop Punning (Major Area)","POP Punning (Minor Area)","Pop Punning (Minor Area)"]):
             return "POP & Gypsum Plaster"
         
         # WATERPROOFING
-        if any(kw in name_lower for kw in ["waterproof", "water proof", "sunken", "wp-"]):
+        if any(kw in name_lower for kw in ["water proofing works","Water Proofing Works"]):
             return "Waterproofing - Sunken"
         
         # WALL TILE
@@ -1663,8 +1663,6 @@ def process_cos_data(tower_name: str, tower_df: pd.DataFrame) -> pd.DataFrame:
             "Min. count of UP-First Fix and CP-First Fix": "Plumbing Works",
             "POP punning (Major area)": "POP & Gypsum Plaster",
             "POP Punning(Major area)": "POP & Gypsum Plaster",
-            "EL-Second Fix": "Wiring & Switch Socket",
-            "EL- Second Fix": "Wiring & Switch Socket",
             "EL-2nd Fix": "Wiring & Switch Socket",
             "EL- 2nd Fix": "Wiring & Switch Socket",
             "EL 2nd Fix": "Wiring & Switch Socket",
@@ -2787,11 +2785,11 @@ ACTIVITY_MAPPING = {
     "Door/Window Frame": "Installation of doors",
     "Plumbing Works": "Min. count of UP-First Fix and CP-First Fix",
     "Waterproofing - Sunken": "Water Proofing Works",
-    "POP & Gypsum Plaster": "Gypsum & POP Punning",
+    "POP & Gypsum Plaster": "POP punning (Major area)",
     "Wall Tile": "Wall Tiling",
     "Floor Tile": "Floor Tiling",
     "Door/Window Shutter": "Installation of doors",
-    "Wiring & Switch Socket": "EL-Second Fix",
+    "Wiring & Switch Socket": "EL 2nd Fix",
     
     # Structure Work Activities (Asite -> COS)
     "Shuttering": "No. of Slab cast",
@@ -4025,98 +4023,140 @@ def debug_asite_data_flow(ai_data):
         st.error(f"Error in debug function: {str(e)}")
         return False
 
-def apply_tower_f_hardcoded_fixes(consolidated_rows):
-    """
-    Apply hardcoded count corrections ONLY for Tower F's COS data.
-    This function is completely standalone and does not affect any other logic.
+# def apply_tower_f_hardcoded_fixes(consolidated_rows):
+#     """
+#     Apply hardcoded count corrections for Tower F, G, and H COS data.
+#     This function is completely standalone and does not affect any other logic.
     
-    WHAT IT DOES:
-    - Finds Tower F rows in the consolidated data
-    - Overrides ONLY the COS counts (Completed Work column) for specific activities
-    - Leaves Asite data completely untouched
-    - Recalculates the gap based on corrected COS vs unchanged Asite
+#     WHAT IT DOES:
+#     - Finds Tower F, G, and H rows in the consolidated data
+#     - Overrides ONLY the COS counts (Completed Work column) for specific activities
+#     - Leaves Asite data completely untouched
+#     - Recalculates the gap based on corrected COS vs unchanged Asite
     
-    CORRECTIONS APPLIED:
-    - POP & Gypsum Plaster: Force COS count to 64 (was incorrectly 117)
-    - Wall Conduting: Force COS count to 0 (was incorrectly 1)
-    - Wiring & Switch Socket: Force COS count to 0 (was incorrectly 2)
+#     CORRECTIONS APPLIED:
     
-    Args:
-        consolidated_rows: List of dictionaries with activity data
-                          Expected keys: 'Tower', 'Activity Name', 
-                                       'Completed Work*(Count of Flat)',
-                                       'Closed checklist against completed work',
-                                       'Open/Missing check list'
+#     Tower F:
+#     - POP & Gypsum Plaster: Force COS count to 64 (was incorrectly 117)
+#     - Wall Conduting: Force COS count to 0 (was incorrectly 1)
+#     - Wiring & Switch Socket: Force COS count to 0 (was incorrectly 2)
     
-    Returns:
-        List of consolidated rows with Tower F corrections applied
-        (Original list is modified in-place and also returned)
-    """
-    import logging
+#     Tower G:
+#     - Wiring & Switch Socket: Force COS count to 0
     
-    logger = logging.getLogger(__name__)
+#     Tower H:
+#     - Wiring & Switch Socket: Force COS count to 0
     
-    try:
-        logger.info("=" * 80)
-        logger.info("APPLYING TOWER F HARDCODED CORRECTIONS")
-        logger.info("=" * 80)
+#     Args:
+#         consolidated_rows: List of dictionaries with activity data
+#                           Expected keys: 'Tower', 'Activity Name', 
+#                                        'Completed Work*(Count of Flat)',
+#                                        'Closed checklist against completed work',
+#                                        'Open/Missing check list'
+    
+#     Returns:
+#         List of consolidated rows with corrections applied
+#         (Original list is modified in-place and also returned)
+#     """
+#     import logging
+    
+#     logger = logging.getLogger(__name__)
+    
+#     try:
+#         logger.info("=" * 80)
+#         logger.info("APPLYING TOWER F HARDCODED CORRECTIONS")
+#         logger.info("=" * 80)
         
-        # Define the exact corrections for Tower F
-        TOWER_F_CORRECTIONS = {
-            "POP & Gypsum Plaster": 64,  # Correct count (was 117 due to ceiling work being included)
-            "Wall Conduting": 0,          # Correct count (was 1 due to common area LV work)
-            "Wiring & Switch Socket": 0   # Correct count (was 2 due to common area LV work)
-        }
+#         # Define the exact corrections for each tower
+#         TOWER_CORRECTIONS = {
+#             'TF': {
+#                 "POP & Gypsum Plaster": 64,  # Correct count (was 117 due to ceiling work)
+#                 "Wall Conduting": 0,          # Correct count (was 1 due to common area LV work)
+#                 "Wiring & Switch Socket": 0   # Correct count (was 2 due to common area LV work)
+#             },
+#             'TG': {
+#                 "Wiring & Switch Socket": 0   # Set to 0 for Tower G
+#             },
+#             'TH': {
+#                 "Wiring & Switch Socket": 0   # Set to 0 for Tower H
+#             }
+#         }
         
-        rows_updated = 0
+#         # Normalize tower names to standard format (TF, TG, TH)
+#         def normalize_tower(tower_name):
+#             tower_str = str(tower_name).strip().upper()
+#             if 'F' in tower_str:
+#                 return 'TF'
+#             elif 'G' in tower_str:
+#                 return 'TG'
+#             elif 'H' in tower_str:
+#                 return 'TH'
+#             return tower_str
         
-        # Iterate through all rows
-        for row in consolidated_rows:
-            # ONLY process Tower F rows
-            tower = row.get('Tower', '')
-            if tower not in ['TF', 'Tower F', 'TOWER F']:
-                continue  # Skip all other towers
+#         rows_updated = 0
+#         corrections_applied = {}
+        
+#         # Iterate through all rows
+#         for row in consolidated_rows:
+#             # Get and normalize tower name
+#             tower_raw = row.get('Tower', '')
+#             tower_normalized = normalize_tower(tower_raw)
             
-            activity_name = row.get('Activity Name', '')
+#             # Skip if not in our correction list
+#             if tower_normalized not in TOWER_CORRECTIONS:
+#                 continue
             
-            # Check if this activity needs correction
-            if activity_name in TOWER_F_CORRECTIONS:
-                # Get the correct count
-                correct_cos_count = TOWER_F_CORRECTIONS[activity_name]
+#             activity_name = row.get('Activity Name', '')
+            
+#             # Check if this tower + activity needs correction
+#             if activity_name in TOWER_CORRECTIONS[tower_normalized]:
+#                 # Get the correct count for this tower
+#                 correct_cos_count = TOWER_CORRECTIONS[tower_normalized][activity_name]
                 
-                # Get the old COS count (before correction)
-                old_cos_count = row.get('Completed Work*(Count of Flat)', 0)
+#                 # Get the old COS count (before correction)
+#                 old_cos_count = row.get('Completed Work*(Count of Flat)', 0)
                 
-                # Get the Asite count (this will NOT be changed)
-                asite_count = row.get('Closed checklist against completed work', 0)
+#                 # Get the Asite count (this will NOT be changed)
+#                 asite_count = row.get('Closed checklist against completed work', 0)
                 
-                # Apply the correction to COS count
-                row['Completed Work*(Count of Flat)'] = correct_cos_count
+#                 # Apply the correction to COS count
+#                 row['Completed Work*(Count of Flat)'] = correct_cos_count
                 
-                # Recalculate the gap
-                row['Open/Missing check list'] = abs(correct_cos_count - asite_count)
+#                 # Recalculate the gap
+#                 row['Open/Missing check list'] = abs(correct_cos_count - asite_count)
                 
-                # Log the change
-                logger.info(f"Tower F - {activity_name}:")
-                logger.info(f"  COS (Before): {old_cos_count}")
-                logger.info(f"  COS (After):  {correct_cos_count} ✓")
-                logger.info(f"  Asite:        {asite_count} (unchanged)")
-                logger.info(f"  New Gap:      {row['Open/Missing check list']}")
+#                 # Track corrections
+#                 key = f"{tower_normalized} - {activity_name}"
+#                 corrections_applied[key] = {
+#                     'old': old_cos_count,
+#                     'new': correct_cos_count,
+#                     'asite': asite_count,
+#                     'gap': row['Open/Missing check list']
+#                 }
                 
-                rows_updated += 1
+#                 # Log the change
+#                 logger.info(f"{tower_normalized} - {activity_name}:")
+#                 logger.info(f"  COS (Before): {old_cos_count}")
+#                 logger.info(f"  COS (After):  {correct_cos_count} ✓")
+#                 logger.info(f"  Asite:        {asite_count} (unchanged)")
+#                 logger.info(f"  New Gap:      {row['Open/Missing check list']}")
+                
+#                 rows_updated += 1
         
-        logger.info(f"\nTower F Corrections Summary:")
-        logger.info(f"  Total rows updated: {rows_updated}")
-        logger.info("=" * 80)
+#         logger.info(f"\nHardcoded Corrections Summary:")
+#         logger.info(f"  Total rows updated: {rows_updated}")
+#         for key, values in corrections_applied.items():
+#             logger.info(f"  {key}: {values['old']} → {values['new']}")
+#         logger.info("=" * 80)
         
-        return consolidated_rows
+#         return consolidated_rows
         
-    except Exception as e:
-        logger.error(f"ERROR in apply_tower_f_hardcoded_fixes: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        # Return original data if error occurs
-        return consolidated_rows
+#     except Exception as e:
+#         logger.error(f"ERROR in apply_tower_f_hardcoded_fixes: {str(e)}")
+#         import traceback
+#         logger.error(traceback.format_exc())
+#         # Return original data if error occurs
+#         return consolidated_rows
 
 
 # UPDATED generate_consolidated_Checklist_excel function with better Asite handling
@@ -4173,30 +4213,24 @@ def generate_consolidated_Checklist_excel(combined_data):
             
             # ===== MEP ACTIVITIES =====
             # CRITICAL: Check UP-First Fix and CP-First Fix BEFORE general plumbing
-            if "up-first" in name_lower or "up first" in name_lower or "up 1st" in name_lower or "up-1st" in name_lower:
-                return "UP-First Fix"
-            
-            if "cp-first" in name_lower or "cp first" in name_lower or "cp 1st" in name_lower or "cp-1st" in name_lower:
-                return "CP-First Fix"
-            
             # Generic plumbing (only if not UP/CP)
-            if any(kw in name_lower for kw in ["plumbing", "plumb"]):
+            if any(kw in name_lower for kw in ["CP 1st Fix","cp 1st fix","CP-1st Fix","cp-1st fix","UP 1st Fix","up 1st fix","UP-1st Fix","up-1st fix"]):
                 return "Plumbing Works"
             
-            if any(kw in name_lower for kw in ["wall conduct", "conduting", "conduit"]):
+            if any(kw in name_lower for kw in ["Wall Conduting"]):
                 return "Wall Conduting"
             
-            if any(kw in name_lower for kw in ["slab", "casting", "cast"]) and "concreting" not in name_lower:
-                return "Slab Conducting"
+            if any(kw in name_lower for kw in ["Slab conduting"]) and "concreting" not in name_lower:
+                return "Slab conduting"
             
-            if any(kw in name_lower for kw in ["el-", "el ", "el-2", "el 2", "wiring", "switch", "socket", "second fix", "2nd fix", "hvac 2nd"]):
+            if any(kw in name_lower for kw in ["EL 2nd Fix", "el 2nd fix","EL 2nd fix"]):
                 return "Wiring & Switch Socket"
             
             # ===== INTERIOR FINISHING ACTIVITIES =====
-            if any(kw in name_lower for kw in ["pop", "gypsum", "plaster", "punning"]):
+            if any(kw in name_lower for kw in ["POP punning (Major area)", "pop punning (major area)"]):
                 return "POP & Gypsum Plaster"
             
-            if any(kw in name_lower for kw in ["waterproof", "water proof", "sunken"]):
+            if any(kw in name_lower for kw in ["Water Proofing Works", "water proofing works","Water proofing Works"]):
                 return "Waterproofing - Sunken"
             
             if "wall til" in name_lower:
@@ -4206,13 +4240,13 @@ def generate_consolidated_Checklist_excel(combined_data):
                 return "Floor Tile"
             
             # ===== CIVIL WORKS ACTIVITIES =====
-            if any(kw in name_lower for kw in ["concreting", "concrete"]):
+            if any(kw in name_lower for kw in ["Concreting"]):
                 return "Concreting"
             
             if "shutter" in name_lower and "de-" not in name_lower:
                 return "Shuttering"
             
-            if any(kw in name_lower for kw in ["reinforcement", "rebar", "steel"]):
+            if any(kw in name_lower for kw in ["Reinforcement"]):
                 return "Reinforcement"
             
             if "de-shutter" in name_lower or "de shutter" in name_lower:
@@ -4437,7 +4471,7 @@ def generate_consolidated_Checklist_excel(combined_data):
                 else:
                     row["Open/Missing check list"] = concreting_count - closed_count
                 st.write(f"  Synced {row['Tower']} Slab Conducting = {concreting_count}")
-        consolidated_rows = apply_tower_f_hardcoded_fixes(consolidated_rows)
+        # consolidated_rows = apply_tower_f_hardcoded_fixes(consolidated_rows)
         # ========== CREATE EXCEL ==========
         df = pd.DataFrame(consolidated_rows)
         
@@ -4479,9 +4513,7 @@ def generate_consolidated_Checklist_excel(combined_data):
         for tower in sorted(all_towers):
             tower_group = df[df['Tower'] == tower]
             
-            # Display full tower name
-            tower_display = f"Tower {tower[1]}" if tower.startswith("T") else tower
-            worksheet.cell(row=current_row, column=1).value = tower_display
+            worksheet.cell(row=current_row, column=1).value = tower
             worksheet.cell(row=current_row, column=1).font = header_font
             current_row += 1
 
@@ -4528,9 +4560,6 @@ def generate_consolidated_Checklist_excel(combined_data):
 
                 total_open = cat_group["Open/Missing check list"].sum()
                 worksheet.cell(row=current_row, column=1).value = "TOTAL pending checklist"
-                worksheet.cell(row=current_row, column=2).value = ""
-                worksheet.cell(row=current_row, column=3).value = ""
-                worksheet.cell(row=current_row, column=4).value = ""
                 worksheet.cell(row=current_row, column=5).value = total_open
                 
                 for col in range(1, 6):
@@ -4588,7 +4617,7 @@ def generate_consolidated_Checklist_excel(combined_data):
                 continue
 
             # Create site name (e.g., "Eligo-TF", "Eligo-TG", "Eligo-TH")
-            site_name = f"Eligo-Tower {tower[1]}" if tower.startswith("T") else f"Eligo-{tower}"
+            site_name = f"Eligo-{tower}"
 
             if site_name not in summary_data:
                 summary_data[site_name] = {
