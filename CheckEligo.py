@@ -1201,15 +1201,11 @@ def apply_structure_roof_slab_filter(completed_df, dataset_name):
     """
     UNIVERSAL Structure Work Filter for Tower F, G, and H
     
-    Handles ALL variations:
-    Tower F: Quality/Tower F/F1/1st Floor Roof Slab (F1, F2 wings)
-    Tower G: Quality/Tower G/G1/1st Floor Roof Slab (G1, G2, G3 wings)
-    Tower H: Quality/Tower H/H1/1st Floor Roof Slab (H1-H7 wings)
-    
-    Special cases:
-    - "00.Stilt Roof Slab" (with period)
-    - "00 Stilt Roof Slab" (with space)
-    - "4th Fourth Roof Slab" (Tower H typo)
+    Handles patterns like:
+    - Quality/Tower-F/F1/1st Floor Roof Slab
+    - Quality/Tower-G/G2/2nd Floor Roof Slab
+    - Quality/Tower-H/H1/Stilt Roof Slab (REMOVED by this filter)
+    - Quality/Tower-H/H1/00.Stilt Roof Slab (REMOVED by this filter)
     
     Pattern breakdown:
     ^Quality\/Tower\s*[FGH]\/[FGH]\d+\/.*Roof\s+Slab$
@@ -1218,82 +1214,90 @@ def apply_structure_roof_slab_filter(completed_df, dataset_name):
     - \/[FGH]\d+ = Slash, then wing designation (F1-F2, G1-G3, H1-H7)
     - \/.*Roof\s+Slab = Any text ending with "Roof Slab"
     - $ = Must end with Slab (no trailing /XXX)
+    
+    ADDITIONAL FILTER: Removes all Stilt entries
+    - Stilt Roof Slab (with or without leading "00.")
+    - Excludes: "1st Floor", "2nd Floor", "3rd Floor", "4th Floor", etc.
     """
     if completed_df.empty:
         logger.warning("DataFrame is empty - no filtering applied")
         return completed_df
     
     try:
-        # UNIVERSAL PATTERN - Works for F, G, and H
+        # STEP 1: UNIVERSAL PATTERN - Matches roof slab entries
         universal_pattern = r'^Quality\/Tower\s*[FGH]\/[FGH]\d+\/.*Roof\s+Slab$'
         
         # Apply pattern (case-insensitive for "slab" variations)
-        mask = completed_df['full_path'].str.match(universal_pattern, case=False, na=False)
+        mask_roof_slab = completed_df['full_path'].str.match(universal_pattern, case=False, na=False)
         
-        filtered_df = completed_df[mask].copy()
+        # STEP 2: STILT REMOVAL FILTER
+        # Remove entries containing "Stilt" (with or without "00.")
+        stilt_pattern = r'(?:00\.)?\s*Stilt\s+Roof\s+Slab'
+        mask_stilt = completed_df['full_path'].str.contains(stilt_pattern, case=False, na=False, regex=True)
+        
+        # Combine filters: Keep roof slabs BUT exclude stilt
+        mask_final = mask_roof_slab & ~mask_stilt
+        
+        filtered_df = completed_df[mask_final].copy()
         
         records_removed = len(completed_df) - len(filtered_df)
+        stilt_removed = mask_stilt.sum()
+        roof_slab_matched = mask_roof_slab.sum()
         
         logger.info(f"\n{'='*80}")
         logger.info(f"STRUCTURE WORK ROOF SLAB FILTER - {dataset_name}")
         logger.info(f"{'='*80}")
-        logger.info(f"  Pattern: {universal_pattern}")
-        logger.info(f"  Before: {len(completed_df)} records")
+        logger.info(f"  Roof Slab Pattern: {universal_pattern}")
+        logger.info(f"  Stilt Removal Pattern: {stilt_pattern}")
+        logger.info(f"\n  Before: {len(completed_df)} records")
+        logger.info(f"  Matched Roof Slab: {roof_slab_matched} records")
+        logger.info(f"  Removed (Stilt): {stilt_removed} records")
         logger.info(f"  After:  {len(filtered_df)} records")
-        logger.info(f"  Removed: {records_removed} records")
+        logger.info(f"  Total Removed: {records_removed} records")
         
-        # Show statistics
-        logger.info(f"\n  Pattern matching statistics:")
-        logger.info(f"    Matched: {mask.sum()} records")
-        
-        # Show removed entries if any
-        if records_removed > 0:
-            removed = completed_df[~mask]
-            logger.info(f"\n  Sample removed entries:")
-            for idx, (_, row) in enumerate(removed.head(10).iterrows(), 1):
+        # Show sample of removed Stilt entries
+        if stilt_removed > 0:
+            removed_stilt = completed_df[mask_stilt]
+            logger.info(f"\n  Stilt entries removed (showing first 10):")
+            for idx, (_, row) in enumerate(removed_stilt.head(10).iterrows(), 1):
                 path = str(row['full_path'])
                 logger.info(f"    {idx}. {path}")
         
-        # Show kept entries
+        # Show sample of kept entries
         if len(filtered_df) > 0:
-            logger.info(f"\n  Sample kept entries:")
+            logger.info(f"\n  Sample kept entries (floor-level roof slabs):")
             kept_samples = filtered_df.head(10)
             for idx, (_, row) in enumerate(kept_samples.iterrows(), 1):
                 path = str(row['full_path'])
                 logger.info(f"    {idx}. {path}")
             
-            # Analyze distribution by tower and wing
-            logger.info(f"\n  Distribution by Tower and Wing:")
-            
-            towers = {}
+            # Extract floor information
+            logger.info(f"\n  Floor distribution in filtered data:")
+            floor_matches = []
             for path in filtered_df['full_path']:
                 path_str = str(path)
-                # Extract tower (F, G, or H)
-                tower_match = re.search(r'Tower\s*([FGH])', path_str, re.I)
-                # Extract wing (F1-F2, G1-G3, H1-H7)
-                wing_match = re.search(r'\/([FGH]\d+)\/', path_str)
-                
-                if tower_match and wing_match:
-                    tower = tower_match.group(1).upper()
-                    wing = wing_match.group(1).upper()
-                    
-                    if tower not in towers:
-                        towers[tower] = {}
-                    towers[tower][wing] = towers[tower].get(wing, 0) + 1
+                # Try to extract floor level
+                floor_match = re.search(r'(\d+)(?:st|nd|rd|th)\s+Floor', path_str, re.I)
+                if floor_match:
+                    floor_num = floor_match.group(1)
+                    floor_matches.append(int(floor_num))
             
-            for tower in sorted(towers.keys()):
-                total_for_tower = sum(towers[tower].values())
-                logger.info(f"    Tower {tower}: {total_for_tower} total")
-                for wing in sorted(towers[tower].keys()):
-                    count = towers[tower][wing]
-                    logger.info(f"      - {wing}: {count} roof slabs")
+            if floor_matches:
+                logger.info(f"    Min Floor: {min(floor_matches)}")
+                logger.info(f"    Max Floor: {max(floor_matches)}")
+                
+                # Count by floor
+                from collections import Counter
+                floor_counts = Counter(floor_matches)
+                for floor in sorted(floor_counts.keys()):
+                    logger.info(f"    Floor {floor}: {floor_counts[floor]} entries")
         
         logger.info(f"{'='*80}\n")
         
         return filtered_df
         
     except Exception as e:
-        logger.error(f"ERROR in structure roof slab filter: {str(e)}")
+        logger.error(f"ERROR in roof slab filter: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         return completed_df
