@@ -4203,7 +4203,7 @@ def apply_tower_f_hardcoded_fixes(consolidated_rows):
         # Define the exact corrections for Tower F
         TOWER_F_CORRECTIONS = {
             "Wall Tile": 64,# Correct count (was 1 due to common area LV work)
-            "Waterproofing - Sunken":64
+            #"Waterproofing - Sunken":64
         }
         
         # Normalize tower names to standard format (TF)
@@ -4911,4 +4911,5 @@ if st.sidebar.button("Analyze and Display Activity Counts"):
 st.sidebar.title("Slab Cycle")
 st.session_state.ignore_year = datetime.now().year
 st.session_state.ignore_month = datetime.now().month
+
 
