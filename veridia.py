@@ -12425,7 +12425,16 @@ def generate_consolidated_Checklist_excel(ai_data):
                 cos_count = 0
                 logger.info(f"HARDCODED: T6 Wiring & Switch Socket (MEP Works) set to 0 (was {cos_data['count']})")
                 st.write(f"✓ Hardcoded T6 Wiring & Switch Socket to 0")
+            # **HARDCODE: Tower 7 Interior Finishing Works**
+            if tower_name == "T7" and activity_name == "Floor Tiling":
+                cos_count = 164
+                logger.info(f"HARDCODED: T7 Floor Tiling set to 164 (was {cos_data['count']})")
+                st.write(f"✓ Hardcoded T7 Floor Tiling to 164")
 
+            if tower_name == "T7" and activity_name == "Wall Tiling":
+                cos_count = 164
+                logger.info(f"HARDCODED: T7 Wall Tiling set to 164 (was {cos_data['count']})")
+                st.write(f"✓ Hardcoded T7 Wall Tiling to 164")
             # **HARDCODE: Tower 5 Civil Works and Slab Conduting to 78**
             if tower_name == "T5":
                 if category == "Civil Works" and activity_name in ["Concreting", "Shuttering", "Reinforcement", "De-shuttering"]:
