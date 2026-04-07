@@ -4511,7 +4511,7 @@ st.markdown(
 # Initialize and Fetch Data
 st.sidebar.title("🔐 Asite Initialization")
 email = st.sidebar.text_input("Email", "impwatson@gadieltechnologies.com", key="email_input")
-password = st.sidebar.text_input("Password", "Srihari@790$", type="password", key="password_input")
+password = st.sidebar.text_input("Password", "Wave2026@123$", type="password", key="password_input")
 
 if st.sidebar.button("Initialize and Fetch Data"):
     loop = asyncio.new_event_loop()
