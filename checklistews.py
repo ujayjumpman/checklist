@@ -2418,21 +2418,33 @@ def display_activity_count():
         st.session_state.cos_activity_counts = {}
 
         count_tables = {}
+        cos_finishing_towers = st.session_state.get('cos_finishing_towers', {})
         target_towers = ['EWS Tower 1', 'EWS Tower 2', 'EWS Tower 3',
                          'LIG Tower 1', 'LIG Tower 2', 'LIG Tower 3']
 
-        waterproofing_override_towers = {'EWS Tower 1', 'LIG Tower 3'}
         for tower in target_towers:
-            cos_counts = {a: 0 for a in all_activities}
-            if tower in waterproofing_override_towers:
-                cos_counts["Waterproofing - Sunken"] = 120
+            tower_segment = tower.split()[0]
+            tower_num = tower.split()[-1]
+            finishing_key = f"{tower_segment}_{tower_num}"
+            finishing_info = cos_finishing_towers.get(finishing_key)
 
-            st.session_state.cos_activity_counts[tower] = cos_counts
-            count_table = pd.DataFrame({
-                'Closed_Checklist_Unfiltered': [cos_counts.get(a, 0) for a in all_activities],
-                'Closed_Checklist_Filtered':   [cos_counts.get(a, 0) for a in all_activities],
-            }, index=all_activities)
-            count_tables[tower] = count_table
+            cos_counts = {}
+            if finishing_info and isinstance(finishing_info, dict):
+                cos_df_tower = finishing_info.get('df')
+                cos_counts = extract_cos_activity_counts(cos_df_tower, tower)
+                st.write(f"COS counts for {tower}: {cos_counts}")
+
+            if not cos_counts and tower in asite_closed_counts:
+                st.warning(f"No COS finishing counts for {tower}. Falling back to Asite counts.")
+                cos_counts = {a: asite_closed_counts[tower].get(a, 0) for a in all_activities}
+
+            if cos_counts:
+                st.session_state.cos_activity_counts[tower] = cos_counts
+                count_table = pd.DataFrame({
+                    'Closed_Checklist_Unfiltered': [cos_counts.get(a, 0) for a in all_activities],
+                    'Closed_Checklist_Filtered':   [cos_counts.get(a, 0) for a in all_activities],
+                }, index=all_activities)
+                count_tables[tower] = count_table
 
         if not count_tables:
             st.error("No count tables generated for any towers.")
@@ -2662,17 +2674,58 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
         towers = ["EWS Tower 1", "EWS Tower 2", "EWS Tower 3",
                   "LIG Tower 1", "LIG Tower 2", "LIG Tower 3"]
 
+        if "slabreport" not in st.session_state or not st.session_state.slabreport:
+            GetSlabReport()
+
+        try:
+            if isinstance(st.session_state.slabreport, str) and st.session_state.slabreport == "No Data Found":
+                st.error("No slab report data found.")
+                return None
+            slab_data = (json.loads(st.session_state.slabreport)
+                         if isinstance(st.session_state.slabreport, str)
+                         else st.session_state.slabreport)
+            if not isinstance(slab_data, list):
+                st.error("Invalid slab report format.")
+                return None
+        except Exception as e:
+            st.error(f"Error parsing slab report: {e}")
+            return None
+
+        expected_towers = ["EWST1", "EWST2", "EWST3", "LIGT1", "LIGT2", "LIGT3"]
+        tower_mapping = {
+            "EWST1": "EWS Tower 1", "EWST2": "EWS Tower 2", "EWST3": "EWS Tower 3",
+            "LIGT1": "LIG Tower 1", "LIGT2": "LIG Tower 2", "LIGT3": "LIG Tower 3",
+        }
+        tower_counts_raw = {t: 0 for t in expected_towers}
+        for entry in slab_data:
+            t = entry.get("Tower")
+            c = entry.get("Slab Count", 0)
+            if t in tower_counts_raw:
+                tower_counts_raw[t] = int(c) if isinstance(c, (int, float)) and not pd.isna(c) else 0
+
+        tracker_completed_mapping = {
+            tower_mapping[t]: cnt for t, cnt in tower_counts_raw.items()
+        }
+        st.write("DEBUG - Tracker Completed Mapping:", tracker_completed_mapping)
+
+        civil_activities = {"Concreting", "Shuttering", "Reinforcement", "De-Shuttering"}
+
         consolidated_rows = []
         for tower in towers:
+            tower_completed_from_tracker = tracker_completed_mapping.get(tower, 0)
+
             for category, activities in categories.items():
                 for activity in activities:
                     asite_activity = cos_to_asite_mapping.get(activity, activity)
 
-                    completed_work = 0
-                    for item in transformed_activity_counts:
-                        if item["tower"] == tower and item["activity"] == activity:
-                            completed_work = item["completed_count"]
-                            break
+                    if activity in civil_activities or activity == "Slab Conducting":
+                        completed_work = tower_completed_from_tracker
+                    else:
+                        completed_work = 0
+                        for item in transformed_activity_counts:
+                            if item["tower"] == tower and item["activity"] == activity:
+                                completed_work = item["completed_count"]
+                                break
 
                     tower_asite = structure_analysis[structure_analysis['tower_name'] == tower]
                     activity_row = tower_asite[tower_asite['activityName'] == asite_activity]
