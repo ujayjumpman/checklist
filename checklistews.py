@@ -148,15 +148,38 @@ async def GetWorkspaceID():
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
     }
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, verify=certifi.where(), timeout=50)
     if response.status_code != 200:
         st.error(f"Failed to fetch workspace list: {response.status_code} - {response.text}")
         raise Exception(f"Failed to fetch workspace list: {response.status_code}")
+
+    response_text = (response.text or "").strip()
+    if not response_text:
+        st.error("Workspace list API returned an empty response. Please re-login and try again.")
+        raise Exception("Workspace list API returned empty response")
+
     try:
         data = response.json()
-        st.session_state.workspaceid = data['asiteDataList']['workspaceVO'][0]['Workspace_Id']
+    except json.JSONDecodeError:
+        preview = response_text[:250].replace("\n", " ")
+        st.error(f"Workspace list returned non-JSON response. Preview: {preview}")
+        raise Exception("Workspace list API returned non-JSON response")
+
+    try:
+        workspace_list = (
+            data.get('asiteDataList', {}).get('workspaceVO', [])
+            if isinstance(data, dict) else []
+        )
+        if not workspace_list:
+            raise KeyError("asiteDataList.workspaceVO is missing or empty")
+
+        workspace_id = workspace_list[0].get('Workspace_Id')
+        if not workspace_id:
+            raise KeyError("Workspace_Id missing in workspaceVO[0]")
+
+        st.session_state.workspaceid = workspace_id
         st.write(f"Workspace ID: {st.session_state.workspaceid}")
-    except (KeyError, IndexError) as e:
+    except (KeyError, IndexError, TypeError) as e:
         st.error(f"Error parsing workspace ID: {str(e)}")
         raise
 
