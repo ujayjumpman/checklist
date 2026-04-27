@@ -2749,6 +2749,8 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                             if item["tower"] == tower and item["activity"] == activity:
                                 completed_work = item["completed_count"]
                                 break
+                        if activity == "Plumbing Works":
+                            completed_work = 0
 
                     tower_asite = structure_analysis[structure_analysis['tower_name'] == tower]
                     activity_row = tower_asite[tower_asite['activityName'] == asite_activity]
