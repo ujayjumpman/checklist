@@ -1147,23 +1147,9 @@ def process_data(df, activity_df, location_df, dataset_name, use_module_hierarch
 
     def normalize_activity_name(name):
         typo_corrections = {
-            "Wall Conduting": "Wall Conducting",
             "Slab conduting": "Slab Conducting",
-            "WallTile": "Wall Tile",
-            "FloorTile": "Floor Tile",
             "Wall Tiling": "Wall Tile",
             "Floor Tiling": "Floor Tile",
-            "wall tile": "Wall Tile",
-            "floor tile": "Floor Tile",
-            "wall tiling": "Wall Tile",
-            "floor tiling": "Floor Tile",
-            "DoorWindowFrame": "Door/Window Frame",
-            "DoorWindowShutter": "Door/Window Shutter",
-            "Second Roof Slab": "Roof Slab",
-            "First Roof Slab": "Roof Slab",
-            "Roof slab": "Roof Slab",
-            "Beam": "Beam",
-            "Column": "Column",
             "Reinforcement": "Reinforcement",
             "Shuttering": "Shuttering",
             "Concreting": "Concreting",
@@ -1540,9 +1526,12 @@ def make_streamlit_safe_df(df):
 # Process Excel files for EWSLIG blocks with updated sheet names and expected_columns
 def process_file(file_stream, filename):
     try:
-        workbook = openpyxl.load_workbook(file_stream)
+        file_stream.seek(0)
+        workbook = openpyxl.load_workbook(file_stream, read_only=True, data_only=True)
         available_sheets = workbook.sheetnames
-        st.write(f"Available sheets in {filename}: {', '.join(available_sheets)}")
+
+        file_stream.seek(0)
+        excel_file = pd.ExcelFile(file_stream, engine="openpyxl")
 
         target_sheets = ["Revised Baseline 45daysNGT+Rai"]
         results = []
@@ -1552,59 +1541,62 @@ def process_file(file_stream, filename):
                 st.warning(f"Sheet '{sheet_name}' not found in file: {filename}")
                 continue
 
-            file_stream.seek(0)
-
             try:
-                # Read the first few rows to inspect the data
-                df_preview = pd.read_excel(file_stream, sheet_name=sheet_name, nrows=10)
-                st.write(f"Preview of first 10 rows in {sheet_name}:")
-                st.write(make_streamlit_safe_df(df_preview))
+                raw_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+                if raw_df.empty:
+                    st.warning(f"Sheet '{sheet_name}' is empty in file: {filename}")
+                    continue
 
-                # Try different header rows
                 header_found = False
                 actual_finish_col = None
+                df = None
+
                 for header_row in [4, 5, 6, 3, 2]:
-                    file_stream.seek(0)
-                    df = pd.read_excel(file_stream, sheet_name=sheet_name, header=header_row)
-                    st.write(f"Testing header row {header_row} in {sheet_name}. Raw columns: {list(df.columns)}")
+                    if header_row >= len(raw_df):
+                        continue
 
-                    df.columns = [col.strip() if isinstance(col, str) else col for col in df.columns]
+                    candidate_df = raw_df.iloc[header_row + 1:].copy()
+                    candidate_df.columns = raw_df.iloc[header_row].tolist()
+                    candidate_df.columns = [
+                        col.strip() if isinstance(col, str) else col
+                        for col in candidate_df.columns
+                    ]
 
-                    # Check for 'Floors' or floor identifiers
-                    if 'Floors' in df.columns or any('Floor' in str(col) for col in df.columns):
+                    if 'Floors' in candidate_df.columns or any('Floor' in str(col) for col in candidate_df.columns):
                         header_found = True
-                    elif not df.empty and any(str(df.iloc[i, 0]).strip() in ['GF', '1F', '2F', '3F', '4F', '5F'] for i in range(min(5, len(df)))):
-                        if df.columns[0] != 'Floors':
-                            df.rename(columns={df.columns[0]: 'Floors'}, inplace=True)
+                    elif not candidate_df.empty and any(
+                        str(candidate_df.iloc[i, 0]).strip() in ['GF', '1F', '2F', '3F', '4F', '5F']
+                        for i in range(min(5, len(candidate_df)))
+                    ):
+                        if candidate_df.columns[0] != 'Floors':
+                            candidate_df.rename(columns={candidate_df.columns[0]: 'Floors'}, inplace=True)
                         header_found = True
 
-                    # Check for 'Actual Finish' or variants
-                    for col in df.columns:
+                    for col in candidate_df.columns:
                         if str(col).lower() in ['actual finish', 'actual_finish', 'finish date', 'completion date']:
                             actual_finish_col = col
                             break
 
-                    if header_found and actual_finish_col:
-                        break
+                    if header_found:
+                        df = candidate_df
+                        if actual_finish_col:
+                            break
 
-                if not header_found:
+                if not header_found or df is None:
                     st.error(f"No valid header row found in {sheet_name}. Expected to find 'Floors' column or floor identifiers.")
                     continue
 
-                # Clean up the dataframe
                 df = df.dropna(subset=[df.columns[0]])
                 df = df[~df.iloc[:, 0].astype(str).str.contains('Floor|Pour|Baseline|Days', case=False, na=False)]
-                
+
                 floor_pattern = r'^(GF|\d{1,2}F)$'
                 df = df[df.iloc[:, 0].astype(str).str.match(floor_pattern, na=False)]
 
                 df.rename(columns={df.columns[0]: 'Activity Name'}, inplace=True)
 
-                # Rename 'Actual Finish' if found
                 if actual_finish_col:
                     df.rename(columns={actual_finish_col: 'Actual Finish'}, inplace=True)
                 else:
-                    st.write(f"No 'Actual Finish' column found in {sheet_name}. Using empty values.")
                     df['Actual Finish'] = pd.NA
                     logger.info(f"No 'Actual Finish' column in {sheet_name}")
 
@@ -1624,26 +1616,7 @@ def process_file(file_stream, filename):
                 if 'Actual Finish' in df.columns:
                     df['Actual_Finish_Original'] = df['Actual Finish'].astype(str)
                     df['Actual Finish'] = pd.to_datetime(df['Actual Finish'], errors='coerce', dayfirst=True)
-                    has_na_mask = (
-                        pd.isna(df['Actual Finish']) |
-                        (df['Actual_Finish_Original'].str.upper() == 'NAT') |
-                        (df['Actual_Finish_Original'].str.lower().isin(['nan', 'na', 'n/a', 'none', '']))
-                    )
-                    st.write(f"Sample of rows with NA or invalid values in Actual Finish for {sheet_name}:")
-                    na_rows = df[has_na_mask][['Activity Name', 'Actual Finish']]
-                    if not na_rows.empty:
-                        st.write(na_rows.head(10))
-                    else:
-                        st.write("No NA or invalid values found in Actual Finish")
                     df.drop('Actual_Finish_Original', axis=1, inplace=True)
-
-                st.write(f"Unique Activity Names (Floor identifiers) in {sheet_name}:")
-                st.write(make_streamlit_safe_df(df[['Activity Name']].drop_duplicates()))
-
-                st.write(f"Final processed dataframe shape: {df.shape}")
-                st.write(f"Final columns: {list(df.columns)}")
-                st.write("Sample of processed data:")
-                st.write(make_streamlit_safe_df(df.head()))
 
                 results.append((df, sheet_name))
 
@@ -1794,10 +1767,13 @@ def get_cos_tracker_files():
 
 def process_finishing_tracker_file(file_stream, filename, tower_name=None):
     try:
-        workbook = openpyxl.load_workbook(file_stream)
+        file_stream.seek(0)
+        workbook = openpyxl.load_workbook(file_stream, read_only=True, data_only=True)
         available_sheets = workbook.sheetnames
-        st.write(f"Available sheets in {filename}: {', '.join(available_sheets)}")
         candidate_sheets = available_sheets
+
+        file_stream.seek(0)
+        excel_file = pd.ExcelFile(file_stream, engine="openpyxl")
 
         inferred_tower_name = tower_name
         filename_only = filename.split('/')[-1]
@@ -1822,7 +1798,6 @@ def process_finishing_tracker_file(file_stream, filename, tower_name=None):
             ]
             if matching_sheets:
                 candidate_sheets = matching_sheets
-                st.write(f"Using finishing sheet for {inferred_tower_name}: {', '.join(candidate_sheets)}")
             else:
                 st.warning(
                     f"Expected finishing sheet '{target_sheet_name}' not found in {filename}. "
@@ -1906,8 +1881,7 @@ def process_finishing_tracker_file(file_stream, filename, tower_name=None):
         processed_sheet_names = []
 
         for sheet_name in ordered_sheets:
-            file_stream.seek(0)
-            raw_df = pd.read_excel(sheet_name=sheet_name, io=file_stream, header=None)
+            raw_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
 
             if raw_df.empty or raw_df.shape[1] <= 11:
                 logger.info(f"{filename} - sheet {sheet_name} skipped because it has only {raw_df.shape[1]} columns.")
@@ -1947,11 +1921,6 @@ def process_finishing_tracker_file(file_stream, filename, tower_name=None):
             return (None, None)
 
         df = pd.concat(combined_frames, ignore_index=True)
-        st.write(
-            f"Processed finishing tracker for {inferred_tower_name}: {len(df)} rows "
-            f"from sheets: {', '.join(processed_sheet_names)}"
-        )
-        st.write(make_streamlit_safe_df(df.head()))
         return (df, inferred_tower_name)
 
     except Exception as e:
@@ -2076,7 +2045,7 @@ def generate_fallback_totals(count_table):
                 ]},
                 {"Category": "MEP Works", "Activities": [
                     {"Activity Name": "Plumbing Works", "Total": 0},
-                    {"Activity Name": "Min. count of UP-First Fix and CP-First Fix", "Total": 0},
+                    {"Activity Name": "Min. count of UP First Fix and CP First Fix", "Total": 0},
                     {"Activity Name": "Slab Conducting", "Total": 0},
                     {"Activity Name": "Wall Conducting", "Total": 0},
                     {"Activity Name": "Wiring & Switch Socket", "Total": 0}
@@ -2104,7 +2073,7 @@ def generate_fallback_totals(count_table):
                 "Concreting", "Shuttering", "Reinforcement", "De-Shuttering"
             ],
             "MEP Works": [
-                "Plumbing Works", "Min. count of UP-First Fix and CP-First Fix",
+                "Plumbing Works", "Min. count of UP First Fix and CP First Fix",
                 "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket"
             ],
             "Interior Finishing Works": [
@@ -2118,8 +2087,16 @@ def generate_fallback_totals(count_table):
             
             if category == "MEP Works":
                 for activity in activities:
-                    if activity == "Min. count of UP-First Fix and CP-First Fix":
-                        combined_count = count_table.loc["UP-First Fix and CP-First Fix", "Count"] if "UP-First Fix and CP-First Fix" in count_table.index else 0
+                    if activity == "Min. count of UP First Fix and CP First Fix":
+                        combined_count = (
+                            count_table.loc["Min. count of UP First Fix and CP First Fix", "Count"]
+                            if "Min. count of UP First Fix and CP First Fix" in count_table.index
+                            else (
+                                count_table.loc["Min. count of UP-First Fix and CP-First Fix", "Count"]
+                                if "Min. count of UP-First Fix and CP-First Fix" in count_table.index
+                                else 0
+                            )
+                        )
                         total = combined_count
                     else:
                         total = count_table.loc[activity, "Count"] if activity in count_table.index else 0
@@ -2150,7 +2127,7 @@ def generate_fallback_totals(count_table):
             ]},
             {"Category": "MEP Works", "Activities": [
                 {"Activity Name": "Plumbing Works", "Total": 0},
-                {"Activity Name": "Min. count of UP-First Fix and CP-First Fix", "Total": 0},
+                {"Activity Name": "Min. count of UP First Fix and CP First Fix", "Total": 0},
                 {"Activity Name": "Slab Conducting", "Total": 0},
                 {"Activity Name": "Wall Conducting", "Total": 0},
                 {"Activity Name": "Wiring & Switch Socket", "Total": 0}
@@ -2180,7 +2157,7 @@ def build_categorized_activity_response(activity_counts):
             "Concreting", "Shuttering", "Reinforcement", "De-Shuttering"
         ],
         "MEP Works": [
-            "Plumbing Works", "UP-First Fix and CP-First Fix",
+            "Plumbing Works", "Min. count of UP First Fix and CP First Fix",
             "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket"
         ],
         "Interior Finishing Works": [
@@ -2192,11 +2169,8 @@ def build_categorized_activity_response(activity_counts):
     for category, activities in categories.items():
         category_data = {"Category": category, "Activities": []}
         for activity in activities:
-            display_name = activity
-            if activity == "UP-First Fix and CP-First Fix":
-                display_name = "Min. count of UP-First Fix and CP-First Fix"
             category_data["Activities"].append({
-                "Activity Name": display_name,
+                "Activity Name": activity,
                 "Total": int(activity_counts.get(activity, 0) or 0),
             })
         result.append(category_data)
@@ -2237,6 +2211,11 @@ def normalize_activity_label(label):
 
 def normalize_report_activity_name(activity_name):
     normalized = normalize_activity_label(activity_name)
+
+    # Keep tile mapping strict so broader finish-preparation activities do not
+    # get folded into Wall/Floor Tile by accident.
+    if any(token in normalized for token in ["ceiling", "surfacepreparation", "toppreparation"]):
+        return activity_name
     
     report_aliases = {
         # Civil
@@ -2245,24 +2224,17 @@ def normalize_report_activity_name(activity_name):
         "reinforcement":                        "Reinforcement",
         "deshuttering":                         "De-Shuttering",
         # MEP
-        "plumbingworks":                        "Plumbing Works",
         "slabconducting":                       "Slab Conducting",
-        "wallconducting":                       "Wall Conducting",
-        "wallconduting":                        "Wall Conducting",
         "elfirstfix":                           "Wall Conducting",
         "el1stfix":                             "Wall Conducting",
-        "wiringswitchsocket":                   "Wiring & Switch Socket",
-        "wiringandswitchsocket":                "Wiring & Switch Socket",
-        "elsecondfix":                          "Wiring & Switch Socket",
+        "el-secondfix":                          "Wiring & Switch Socket",
         "el2ndfix":                             "Wiring & Switch Socket",
-        "eisecondfix":                          "Wiring & Switch Socket",
-        "ei2ndfix":                             "Wiring & Switch Socket",
+        "el-secondfix":                          "Wiring & Switch Socket",
+        "el2ndfix":                             "Wiring & Switch Socket",
         "upfirstfixandcpfirstfix":              "Plumbing Works",
         "mincountofupfirstfixandcpfirstfix":    "Plumbing Works",
         # Finishing — ONLY exact normalized matches allowed for tiles
-        "floortile":                            "Floor Tile",
         "floortiling":                          "Floor Tile",
-        "walltile":                             "Wall Tile",
         "walltiling":                           "Wall Tile",
         "popgypsumplaster":                     "POP & Gypsum Plaster",
         "popandgypsumplaster":                  "POP & Gypsum Plaster",
@@ -2278,11 +2250,6 @@ def normalize_report_activity_name(activity_name):
         "waterproofingworksforsunken":          "Waterproofing - Sunken",
         "waterproofingsunkenarea":              "Waterproofing - Sunken",
         "waterproofingforsunken":               "Waterproofing - Sunken",
-        # Door
-        "installationofdoors":                  "Door/Window Frame",
-        "installationdoors":                    "Door/Window Frame",
-        "doorwindowframe":                      "Door/Window Frame",
-        "doorwindowshutter":                    "Door/Window Shutter",
     }
 
     if normalized in report_aliases:
@@ -2314,7 +2281,7 @@ def extract_cos_activity_counts(tower_df, tower_name):
             "Plumbing Works", "Door/Window Frame",
             "Floor Tile", "Wall Tile",
             "POP & Gypsum Plaster", "Waterproofing - Sunken",
-            "UP-First Fix and CP-First Fix",
+            "Min. count of UP First Fix and CP First Fix",
         ]
         counts = {activity: 0 for activity in expected_activities}
 
@@ -2332,10 +2299,30 @@ def extract_cos_activity_counts(tower_df, tower_name):
             return counts
 
         activity_occurrences = {}
+        up_first_fix_aliases = {"upfirstfix", "up1stfix"}
+        cp_first_fix_aliases = {"cpfirstfix", "cp1stfix"}
+        combined_plumbing_aliases = {
+            "upfirstfixandcpfirstfix",
+            "mincountofupfirstfixandcpfirstfix",
+        }
 
         for _, row in working_df.iterrows():
             raw_activity = str(row.get('Activity Name') or '').strip()
+            activity_key = normalize_activity_label(raw_activity)
+
+            if activity_key in up_first_fix_aliases:
+                activity_occurrences["UP_FIRST_FIX"] = activity_occurrences.get("UP_FIRST_FIX", 0) + 1
+                continue
+            if activity_key in cp_first_fix_aliases:
+                activity_occurrences["CP_FIRST_FIX"] = activity_occurrences.get("CP_FIRST_FIX", 0) + 1
+                continue
+
             mapped_activity = normalize_report_activity_name(raw_activity)
+
+            if mapped_activity == "Plumbing Works":
+                if activity_key in combined_plumbing_aliases:
+                    activity_occurrences["COMBINED_PLUMBING"] = activity_occurrences.get("COMBINED_PLUMBING", 0) + 1
+                continue
 
             # Log every Wall Tile / Floor Tile hit for debugging
             if mapped_activity in ("Floor Tile", "Wall Tile"):
@@ -2343,11 +2330,6 @@ def extract_cos_activity_counts(tower_df, tower_name):
 
             # Unrecognized — mapped_activity equals raw_activity, skip unless UP/CP split
             if mapped_activity == raw_activity:
-                activity_key = normalize_activity_label(raw_activity)
-                if activity_key == "upfirstfix":
-                    activity_occurrences["UP_FIRST_FIX"] = activity_occurrences.get("UP_FIRST_FIX", 0) + 1
-                elif activity_key == "cpfirstfix":
-                    activity_occurrences["CP_FIRST_FIX"] = activity_occurrences.get("CP_FIRST_FIX", 0) + 1
                 # All other unrecognized activities are skipped entirely
                 continue
 
@@ -2356,8 +2338,7 @@ def extract_cos_activity_counts(tower_df, tower_name):
         # Write recognized Asite-name activities directly
         for activity in [
             "Concreting", "Shuttering", "Reinforcement", "De-Shuttering",
-            "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket",
-            "Plumbing Works", "Door/Window Frame",
+            "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket", "Door/Window Frame",
             "Floor Tile", "Wall Tile",
             "POP & Gypsum Plaster", "Waterproofing - Sunken",
         ]:
@@ -2366,17 +2347,16 @@ def extract_cos_activity_counts(tower_df, tower_name):
         # UP/CP combined logic
         up_count       = activity_occurrences.get("UP_FIRST_FIX", 0)
         cp_count       = activity_occurrences.get("CP_FIRST_FIX", 0)
-        combined_count = activity_occurrences.get("Plumbing Works", 0)
+        combined_count = activity_occurrences.get("COMBINED_PLUMBING", 0)
 
-        if up_count and cp_count:
-            counts["UP-First Fix and CP-First Fix"] = min(up_count, cp_count)
+        if up_count or cp_count:
+            counts["Min. count of UP First Fix and CP First Fix"] = min(up_count, cp_count)
         elif combined_count:
-            counts["UP-First Fix and CP-First Fix"] = combined_count
+            counts["Min. count of UP First Fix and CP First Fix"] = combined_count
         else:
-            counts["UP-First Fix and CP-First Fix"] = max(up_count, cp_count)
+            counts["Min. count of UP First Fix and CP First Fix"] = 0
 
-        if counts["Plumbing Works"] == 0 and counts["UP-First Fix and CP-First Fix"] > 0:
-            counts["Plumbing Works"] = counts["UP-First Fix and CP-First Fix"]
+        counts["Plumbing Works"] = counts["Min. count of UP First Fix and CP First Fix"]
 
         logger.info(f"{tower_name}: Final COS activity counts: {counts}")
         return counts
@@ -2397,7 +2377,7 @@ def display_activity_count():
             "Plumbing Works", "Slab Conducting", "Wall Conducting", "Wiring & Switch Socket",
             "Floor Tile", "Wall Tile", "POP & Gypsum Plaster", "Waterproofing - Sunken",
         ]
-        all_activities = specific_activities + ["UP-First Fix and CP-First Fix"]
+        all_activities = specific_activities + ["Min. count of UP First Fix and CP First Fix"]
 
         category_mapping = {
             "Concreting":               "Civil Works",
@@ -2408,7 +2388,7 @@ def display_activity_count():
             "Slab Conducting":          "MEP Works",
             "Wall Conducting":          "MEP Works",
             "Wiring & Switch Socket":   "MEP Works",
-            "UP-First Fix and CP-First Fix": "MEP Works",
+            "Min. count of UP First Fix and CP First Fix": "MEP Works",
             "Floor Tile":               "Interior Finishing Works",
             "Wall Tile":                "Interior Finishing Works",
             "POP & Gypsum Plaster":     "Interior Finishing Works",
@@ -2595,20 +2575,16 @@ async def initialize_and_fetch_data(email, password):
 
                     for tracker_info in tracker_files:
                         file_key = tracker_info['key']
-                        st.write(f"Processing file: {file_key}")
                         response = cos_client.get_object(Bucket=COS_BUCKET, Key=file_key)
                         file_bytes = io.BytesIO(response['Body'].read())
-                        st.write("File fetched successfully. Processing sheets...")
 
                         if tracker_info.get('type') == 'structure':
                             results = process_file(file_bytes, file_key)
-                            st.write(f"Processing results: {len(results)} sheets processed")
                             for df, sheet_name in results:
                                 if df is not None and sheet_name == "Revised Baseline 45daysNGT+Rai":
                                     st.session_state.cos_df_Revised_Baseline_45daysNGT_Rai = df
                                     st.session_state.cos_tname_Revised_Baseline_45daysNGT_Rai = "Revised Baseline 45daysNGT+Rai"
-                                    st.write(f"Processed Data for {sheet_name} - {len(df)} rows:")
-                                    st.write(make_streamlit_safe_df(df.head()))
+                                    st.success(f"Processed structure tracker: {sheet_name} ({len(df)} rows)")
                         elif tracker_info.get('type') == 'finishing':
                             df, tower_name = process_finishing_tracker_file(
                                 file_bytes,
@@ -2623,8 +2599,7 @@ async def initialize_and_fetch_data(email, password):
                                     'rows': len(df),
                                     'file': file_key
                                 }
-                                st.write(f"Processed finishing tracker for {tower_name} - {len(df)} rows:")
-                                st.write(make_streamlit_safe_df(df.head()))
+                                st.success(f"Processed finishing tracker: {tower_name} ({len(df)} rows)")
                             else:
                                 st.warning(f"No data processed for finishing tracker {file_key}.")
                 except Exception as e:
@@ -2671,7 +2646,10 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                     for activity_data in category_data.get("Activities", []):
                         raw_name = activity_data.get("Activity Name", "")
                         # "Min. count of UP-First Fix..." → "Plumbing Works"
-                        canonical = normalize_report_activity_name(raw_name)
+                        if raw_name == "Min. count of UP First Fix and CP First Fix":
+                            canonical = raw_name
+                        else:
+                            canonical = normalize_report_activity_name(raw_name)
                         transformed_activity_counts.append({
                             "tower":           tower,
                             "activity":        canonical,
@@ -2745,12 +2723,11 @@ def generate_consolidated_Checklist_excel(structure_analysis=None, activity_coun
                         completed_work = tower_completed_from_tracker
                     else:
                         completed_work = 0
+                        lookup_activity = "Min. count of UP First Fix and CP First Fix" if activity == "Plumbing Works" else activity
                         for item in transformed_activity_counts:
-                            if item["tower"] == tower and item["activity"] == activity:
+                            if item["tower"] == tower and item["activity"] == lookup_activity:
                                 completed_work = item["completed_count"]
                                 break
-                        if activity == "Plumbing Works":
-                            completed_work = 0
 
                     tower_asite = structure_analysis[structure_analysis['tower_name'] == tower]
                     activity_row = tower_asite[tower_asite['activityName'] == asite_activity]
